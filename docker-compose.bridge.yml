@@ -1,0 +1,107 @@
+version: "3.8"
+
+services:
+  bridge:
+    image: celestia-rda:v1.0.1
+    container_name: bridge
+    environment:
+      - P2P_NETWORK=private 
+      - NODE_TYPE=bridge     
+      - RDA_EXPECTED_NODES=9
+      - CELESTIA_BOOTSTRAPPER=true 
+    volumes:
+      - ./consensus/bridge:/home/celestia 
+    ports:
+      - "26758:26658" 
+      - "2221:2121" 
+      - "26558:26558" 
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics.endpoint 0.0.0.0:26558
+    networks:
+      - dal-rda-network
+  
+  bridge2:
+    image: celestia-rda:v1.0.1
+    container_name: bridge2
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge     
+      - RDA_EXPECTED_NODES=9
+      - CELESTIA_BOOTSTRAPPER=true 
+    volumes:
+      - ./consensus/bridge2:/home/celestia
+    ports:
+      - "26759:26658"
+      - "2222:2121"
+      - "26559:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics.endpoint 0.0.0.0:26558
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+    networks:
+      - dal-rda-network
+
+  bridge3:
+    image: celestia-rda:v1.0.1
+    container_name: bridge3
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge     
+      - RDA_EXPECTED_NODES=9
+    volumes:
+      - ./consensus/bridge3:/home/celestia
+    ports:
+      - "26760:26658"
+      - "2223:2121"
+      - "26560:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics.endpoint 0.0.0.0:26558
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+    networks:
+      - dal-rda-network
+
+  bridge4:
+    image: celestia-rda:v1.0.1
+    container_name: bridge4
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge     
+      - RDA_EXPECTED_NODES=9
+    volumes:
+      - ./consensus/bridge4:/home/celestia
+    ports:
+      - "26761:26658"
+      - "2224:2121"
+      - "26561:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics.endpoint 0.0.0.0:26558
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWMTeCrPNto8CjghtT3QqBYkQNXwJrHW8nakn3uKxGRAux 
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWMTeCrPNto8CjghtT3QqBYkQNXwJrHW8nakn3uKxGRAux 
+    networks:
+      - dal-rda-network
+
+networks:
+  dal-rda-network:
+    external: true
+    name: dal-rda-shared

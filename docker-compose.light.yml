@@ -1,0 +1,66 @@
+services:
+  light1:
+    image: celestia-rda:v1.0.1
+    container_name: light1
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=light
+      - RDA_EXPECTED_NODES=9
+      - USER_ID=0
+    user: "0:0"
+    volumes:
+      - ./light1:/home/celestia
+    ports:
+      - "26770:26658"
+    entrypoint: [""]
+    command: |-
+      celestia light start
+      --node.store /home/celestia
+      --p2p.network private
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --core.ip validator1
+      --core.port 9090
+      --keyring.backend test
+      --metrics.endpoint 0.0.0.0:26658
+      --headers.trusted-peers /dns4/bridge3/tcp/2121/p2p/12D3KooWEv9X4zuh9NUwxjJ8NYJyfD3h5wUDcTjzbMeRTbftLJDQ
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWE3tSeAtq8zzoY3s4EK1S3zSJ5wK3xPHDFVcGfwsRz5z4 
+    networks:
+      - dal-rda-network
+  
+
+  light2:
+    image: celestia-rda:v1.0.1
+    container_name: light2
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=light
+      - RDA_EXPECTED_NODES=9
+      - USER_ID=0
+    user: "0:0"
+    volumes:
+      - ./light2:/home/celestia
+    ports:
+      - "26771:26658"
+    entrypoint: [""]
+    command: >
+      celestia light start
+      --node.store /home/celestia
+      --p2p.network private
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --core.ip validator1
+      --core.port 9090
+      --keyring.backend test
+      --metrics.endpoint 0.0.0.0:26658
+      --headers.trusted-peers /dns4/bridge4/tcp/2121/p2p/12D3KooWSHZzf9YAoKb7jibr7DcazAojvPA2RnSLmWLaNbyuuP4h
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWMTeCrPNto8CjghtT3QqBYkQNXwJrHW8nakn3uKxGRAux
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWMTeCrPNto8CjghtT3QqBYkQNXwJrHW8nakn3uKxGRAux
+    networks:
+      - dal-rda-network
+
+networks:
+  dal-rda-network:
+    external: true
+    name: dal-rda-shared
