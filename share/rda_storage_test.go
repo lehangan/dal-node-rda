@@ -15,7 +15,7 @@ func TestRDAStorage_ColumnAffinityViolation(t *testing.T) {
 
 	config := RDAStorageConfig{
 		MyRow:    0,
-		MyCol:    5,    // Node is at column 5
+		MyCol:    5, // Node is at column 5
 		GridSize: 256,
 	}
 	storage := NewRDAStorage(config)
@@ -47,7 +47,7 @@ func TestRDAStorage_CorrectColumnStorage(t *testing.T) {
 
 	config := RDAStorageConfig{
 		MyRow:    0,
-		MyCol:    5,    // Node is at column 5
+		MyCol:    5, // Node is at column 5
 		GridSize: 256,
 	}
 	storage := NewRDAStorage(config)

@@ -27,7 +27,7 @@ type RDAShare struct {
 }
 
 // RDAStorage implements column-based storage respecting RDA column affinity rules
-// 
+//
 // Critical Rules:
 // 1. Node at (row=r, col=c) MUST ONLY store shares from column c
 // 2. Symbol sᵢ MUST be stored at column = i % K (deterministic)
@@ -41,7 +41,7 @@ type RDAStorage struct {
 	mu           sync.RWMutex
 
 	// Metrics
-	sharesStored   int64
+	sharesStored    int64
 	sharesRetrieved int64
 }
 
@@ -59,7 +59,7 @@ func NewRDAStorage(config RDAStorageConfig) *RDAStorage {
 }
 
 // VerifySymbolToColumnMapping verifies symbol belongs to this node's column
-// 
+//
 // Validation Rule:
 // - symbol % gridSize MUST equal myCol
 func (s *RDAStorage) VerifySymbolToColumnMapping(symbolID uint32) error {
@@ -95,7 +95,7 @@ func (s *RDAStorage) VerifyGridPosition(row, col uint32) error {
 }
 
 // ComputeSymbolID converts (row, col) to linear symbolID
-// 
+//
 // Mapping: symbolID = row * K + col
 // where K = grid size
 func (s *RDAStorage) ComputeSymbolID(row, col uint32) (uint32, error) {
@@ -324,10 +324,10 @@ func (s *RDAStorage) GetStats() map[string]interface{} {
 			"grid_size": s.config.GridSize,
 		},
 		"storage_stats": map[string]interface{}{
-			"total_heights":        int64(totalHeights),
-			"total_shares_stored":  totalShares,
-			"total_retrieval_ops":  s.sharesRetrieved,
-			"total_storage_ops":    s.sharesStored,
+			"total_heights":       int64(totalHeights),
+			"total_shares_stored": totalShares,
+			"total_retrieval_ops": s.sharesRetrieved,
+			"total_storage_ops":   s.sharesStored,
 		},
 	}
 

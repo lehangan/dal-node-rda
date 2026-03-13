@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	logging "github.com/ipfs/go-log/v2"
 )
 
 var peerFilterLog = logging.Logger("rda.filter")

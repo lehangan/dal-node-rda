@@ -13,7 +13,7 @@ import (
 type MockColumnPeerResolver struct {
 	columnPeers map[uint32][]string
 	storage     map[string]*RDAStorage // Simulate remote node storage
-	failPeer    string                  // Peer that always fails
+	failPeer    string                 // Peer that always fails
 	delayMs     int64
 }
 
@@ -404,8 +404,8 @@ func TestRDARetrieval_CalculateTargetColumn(t *testing.T) {
 	retrieval := NewRDARetrieval(config, storage, resolver)
 
 	tests := []struct {
-		symbolID   uint32
-		expected   uint32
+		symbolID    uint32
+		expected    uint32
 		description string
 	}{
 		{0, 0, "symbolID=0 → col=0"},

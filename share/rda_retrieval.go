@@ -476,11 +476,11 @@ func (r *RDARetrieval) GetStats() map[string]interface{} {
 			"grid_size": r.config.GridSize,
 		},
 		"retrieval_stats": map[string]interface{}{
-			"total_attempts":    r.retrievalAttempts,
-			"total_successes":   r.retrievalSuccesses,
-			"total_failures":    r.retrievalFailures,
-			"local_retrievals":  r.localRetrievals,
-			"success_rate":      calculateRate(r.retrievalSuccesses, r.retrievalAttempts),
+			"total_attempts":   r.retrievalAttempts,
+			"total_successes":  r.retrievalSuccesses,
+			"total_failures":   r.retrievalFailures,
+			"local_retrievals": r.localRetrievals,
+			"success_rate":     calculateRate(r.retrievalSuccesses, r.retrievalAttempts),
 		},
 	}
 
