@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	p2pDisc "github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/celestiaorg/celestia-node/share"
 )
+
+var rdaModuleLog = logging.Logger("nodebuilder/share/rda")
 
 // RDAModule provides RDA grid functionality.
 type RDAModule struct {
@@ -42,9 +45,18 @@ func newRDAService(
 		return nil, err
 	}
 
-	// Only use DHT discovery if explicitly enabled in config.
+	// Determine which discovery mechanism to use: Grid (subnet) or Legacy (DHT)
+	// When using subnet discovery (RDA Grid architecture), ALWAYS disable DHT
+	// to avoid conflicts between the two P2P paradigms
 	var activeDisc p2pDisc.Discovery
-	if cfg.RDADiscoveryEnabled {
+	if cfg.RDAUseSubnetDiscovery {
+		// RDA Grid architecture: Only subnet-based discovery
+		// DHT is disabled to prevent parallel peer discovery mechanisms
+		rdaModuleLog.Infof("RDA: Using Grid-based subnet discovery (DHT disabled)")
+		activeDisc = nil
+	} else if cfg.RDADiscoveryEnabled {
+		// Legacy mode: DHT-based discovery (when subnet discovery is disabled)
+		rdaModuleLog.Infof("RDA: Using legacy DHT-based discovery (subnet discovery disabled)")
 		activeDisc = disc
 	}
 

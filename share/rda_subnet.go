@@ -24,6 +24,12 @@ type RDASubnetManager struct {
 	rowTopic string
 	colTopic string
 
+	// Role-based joining support
+	role           NodeRole
+	allRowTopics   []string // All row topics (used by bootstrap)
+	allRowSubs     []*pubsub.Subscription
+	joinedWithRole bool
+
 	mu     sync.RWMutex
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -45,14 +51,18 @@ func NewRDASubnetManager(
 	rowID, colID := GetSubnetIDs(myPeerID, gridManager.GetGridDimensions())
 
 	return &RDASubnetManager{
-		pubsub:      ps,
-		gridManager: gridManager,
-		myPeerID:    myPeerID,
-		myPosition:  position,
-		rowTopic:    rowID,
-		colTopic:    colID,
-		ctx:         ctx,
-		cancel:      cancel,
+		pubsub:         ps,
+		gridManager:    gridManager,
+		myPeerID:       myPeerID,
+		myPosition:     position,
+		rowTopic:       rowID,
+		colTopic:       colID,
+		role:           ClientNode, // Default: client role
+		allRowTopics:   []string{},
+		allRowSubs:     []*pubsub.Subscription{},
+		joinedWithRole: false,
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 }
 
@@ -312,4 +322,123 @@ func (s *RDASubnetManager) GetColTopic() string {
 // GetMyPosition returns the grid position
 func (s *RDASubnetManager) GetMyPosition() GridPosition {
 	return s.myPosition
+}
+
+// SetRole sets the node's role (Client or Bootstrap)
+// This must be called before StartWithRole
+func (s *RDASubnetManager) SetRole(role NodeRole) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.role = role
+}
+
+// GetRole returns the current node role
+func (s *RDASubnetManager) GetRole() NodeRole {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.role
+}
+
+// StartWithRole executes JOINSUBNET operation based on node role
+// For ClientNode: Joins only own row + own column
+// For BootstrapNode: Joins ALL rows + own column
+func (s *RDASubnetManager) StartWithRole(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.joinedWithRole {
+		return fmt.Errorf("already joined with role")
+	}
+
+	// Get my position to determine row/column
+	myRow := 0
+	myCol := 0
+	if pos, ok := s.gridManager.GetPeerPosition(s.myPeerID); ok {
+		myRow = pos.Row
+		myCol = pos.Col
+	}
+
+	// Create JoinSubnet operation
+	joiner := NewRDAJoinSubnet(
+		s.pubsub,
+		s.gridManager,
+		s.myPeerID,
+		s.role,
+		myRow,
+		myCol,
+	)
+
+	// Execute JOINSUBNET
+	result, err := joiner.Execute(ctx)
+	if err != nil {
+		log.Warnf("RDA Subnet: StartWithRole FAILED - role=%s, error=%v", s.role, err)
+		return fmt.Errorf("joinsubnet failed: %w", err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("joinsubnet failed: %s", result.Error)
+	}
+
+	// Store joined topics info
+	s.allRowTopics = make([]string, 0, len(result.RowsJoined))
+	for _, row := range result.RowsJoined {
+		topic := fmt.Sprintf("rda/row/%d", row)
+		s.allRowTopics = append(s.allRowTopics, topic)
+	}
+
+	s.joinedWithRole = true
+
+	log.Infof(
+		"RDA Subnet: StartWithRole SUCCESS - role=%s, subnets_joined=%d (rows=%d, cols=%d), latency=%dms ✓",
+		s.role, result.TotalSubnetsJoined, len(result.RowsJoined), len(result.ColsJoined), result.LatencyMs,
+	)
+
+	// For compatibility, subscribe to our own row and column if joining succeeds
+	if len(result.RowsJoined) > 0 {
+		if err := s.subscribeToRow(ctx); err != nil {
+			log.Warnf("failed to subscribe to row after JOINSUBNET: %v", err)
+		}
+	}
+
+	if len(result.ColsJoined) > 0 {
+		if err := s.subscribeToCol(ctx); err != nil {
+			log.Warnf("failed to subscribe to col after JOINSUBNET: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// subscribeToRow subscribes to the row topic (internal helper)
+func (s *RDASubnetManager) subscribeToRow(ctx context.Context) error {
+	rowTopic, err := s.pubsub.Join(s.rowTopic)
+	if err != nil {
+		return fmt.Errorf("failed to join row topic: %w", err)
+	}
+
+	rowSub, err := rowTopic.Subscribe()
+	if err != nil {
+		rowTopic.Close()
+		return fmt.Errorf("failed to subscribe to row topic: %w", err)
+	}
+
+	s.rowSubscription = rowSub
+	return nil
+}
+
+// subscribeToCol subscribes to the column topic (internal helper)
+func (s *RDASubnetManager) subscribeToCol(ctx context.Context) error {
+	colTopic, err := s.pubsub.Join(s.colTopic)
+	if err != nil {
+		return fmt.Errorf("failed to join col topic: %w", err)
+	}
+
+	colSub, err := colTopic.Subscribe()
+	if err != nil {
+		colTopic.Close()
+		return fmt.Errorf("failed to subscribe to col topic: %w", err)
+	}
+
+	s.colSubscription = colSub
+	return nil
 }

@@ -3,9 +3,12 @@ package share
 import (
 	"context"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-datastore"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/host"
 	"go.uber.org/fx"
 
@@ -23,6 +26,8 @@ import (
 	"github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/shrexsub"
 	"github.com/celestiaorg/celestia-node/store"
 )
+
+var log = logging.Logger("nodebuilder/share")
 
 func ConstructModule(tp node.Type, cfg *Config, options ...fx.Option) fx.Option {
 	// sanitize config values before constructing module
@@ -171,6 +176,7 @@ func rdaComponents(tp node.Type, cfg *Config) fx.Option {
 	}
 
 	return fx.Options(
+		// Provide RDA service with lifecycle management
 		fx.Provide(
 			fx.Annotate(
 				newRDAService,
@@ -183,6 +189,35 @@ func rdaComponents(tp node.Type, cfg *Config) fx.Option {
 				}),
 			),
 		),
+		// Create RDA lifecycle manager for subnet discovery coordination
+		fx.Provide(func(service *share.RDANodeService) *RDALifecycle {
+			return NewRDALifecycle(service)
+		}),
+		// Set lifecycle on service so it can signal subnet discovery completion
+		fx.Invoke(func(service *share.RDANodeService, lifecycle *RDALifecycle) {
+			service.SetLifecycle(lifecycle)
+		}),
+		// Ensure subnet discovery completes before allowing DAS/Store workers to start
+		fx.Invoke(func(lc fx.Lifecycle, lifecycle *RDALifecycle) {
+			lc.Append(fx.Hook{
+				OnStart: func(ctx context.Context) error {
+					// Check if this is a bootstrap server
+					isBootstrap := os.Getenv("CELESTIA_BOOTSTRAPPER") == "true"
+					if isBootstrap {
+						// Bootstrap nodes don't wait for subnet discovery - they create the infrastructure
+						// Subnet discovery runs in background via RDANodeService.startSubnetDiscovery()
+						log.Infof("RDA: Bootstrap node starting (not waiting for subnet discovery)")
+						return nil
+					}
+					// Non-bootstrap nodes wait for subnet discovery to ensure they can connect to bootstrap infrastructure
+					return lifecycle.WaitForSubnetDiscovery(ctx, 5*time.Minute)
+				},
+				OnStop: func(ctx context.Context) error {
+					lifecycle.Stop()
+					return nil
+				},
+			})
+		}),
 		fx.Provide(newRDAAPI),
 		fx.Provide(newRDAModule),
 	)

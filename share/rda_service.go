@@ -25,8 +25,15 @@ type RDANodeService struct {
 	discovery              *RDADiscovery              // nil if discovery disabled
 	bootstrapDiscovery     *BootstrapDiscoveryService // Bootstrap-based peer discovery
 	subnetDiscoveryManager *RDASubnetDiscoveryManager
-	useSubnetDiscovery     bool // Use paper-based subnet protocol instead of DHT
-	useBootstrapDiscovery  bool // Use bootstrap nodes for peer discovery
+	storeProtocolHandler   *RDAStoreProtocolHandler  // STORE protocol handler for data distribution
+	storeProposer          *RDAStoreProposer         // STORE proposer for bridge nodes
+	getProtocolHandler     *RDAGetProtocolHandler    // GET protocol handler for query responses
+	getProtocolRequester   *RDAGetProtocolRequester  // GET protocol requester for light nodes
+	syncProtocolHandler    *RDASyncProtocolHandler   // SYNC protocol handler for data sync responses
+	syncProtocolRequester  *RDASyncProtocolRequester // SYNC protocol requester for new nodes
+	useSubnetDiscovery     bool                      // Use paper-based subnet protocol instead of DHT
+	useBootstrapDiscovery  bool                      // Use bootstrap nodes for peer discovery
+	lifecycle              interface{}               // Optional lifecycle manager to signal subnet discovery completion
 
 	mu     sync.RWMutex
 	ctx    context.Context
@@ -156,6 +163,35 @@ func NewRDANodeService(
 	}
 	subnetDiscoveryMgr := NewRDASubnetDiscoveryManager(host, pubsub, delayBeforePull)
 
+	// Create local storage for STORE operations (column-based)
+	localStorage := NewRDAStorage(RDAStorageConfig{
+		MyRow:    uint32(myCoords.Row),
+		MyCol:    uint32(myCoords.Col),
+		GridSize: uint32(gridDims.Cols),
+	})
+
+	// Create STORE protocol handler
+	storeHandler := NewRDAStoreProtocolHandler(host, gridManager, peerManager, subnetManager, localStorage)
+
+	// Create STORE proposer (for bridge nodes)
+	storeProposer := NewRDAStoreProposer(host, gridManager, peerManager)
+
+	// Create GET protocol handler (responder for queries)
+	getHandler := NewRDAGetProtocolHandler(host, gridManager, peerManager, subnetManager, localStorage)
+
+	// Create GET protocol requester (for light nodes to query)
+	getRequester := NewRDAGetProtocolRequester(host, gridManager, peerManager, subnetManager)
+
+	// Create SYNC protocol handler (responder for sync requests)
+	syncHandler := NewRDASyncProtocolHandler(host, gridManager, localStorage)
+
+	// Create SYNC protocol requester (for new nodes to sync on startup)
+	syncDelay := config.SubnetDiscoveryDelay
+	if syncDelay == 0 {
+		syncDelay = 4 * time.Second
+	}
+	syncRequester := NewRDASyncProtocolRequester(host, gridManager, peerManager, localStorage, subnetManager, syncDelay)
+
 	service := &RDANodeService{
 		host:                   host,
 		pubsub:                 pubsub,
@@ -169,6 +205,12 @@ func NewRDANodeService(
 		exchangeCoordinator:    exchangeCoordinator,
 		discovery:              disc,
 		subnetDiscoveryManager: subnetDiscoveryMgr,
+		storeProtocolHandler:   storeHandler,
+		storeProposer:          storeProposer,
+		getProtocolHandler:     getHandler,
+		getProtocolRequester:   getRequester,
+		syncProtocolHandler:    syncHandler,
+		syncProtocolRequester:  syncRequester,
 		useSubnetDiscovery:     config.UseSubnetDiscovery,
 		ctx:                    ctx,
 		cancel:                 cancel,
@@ -212,10 +254,34 @@ func (s *RDANodeService) Start(startCtx context.Context) error {
 	}
 
 	// Start DHT discovery (if configured and not using subnet discovery)
+	// When using subnet discovery (RDA Grid), DHT is always nil and this is skipped
 	if s.discovery != nil && !s.useSubnetDiscovery {
+		log.Infof("RDA: Starting DHT-based peer discovery (legacy mode)")
 		if err := s.discovery.Start(startCtx); err != nil {
 			return fmt.Errorf("failed to start RDA discovery: %w", err)
 		}
+	} else if s.useSubnetDiscovery {
+		log.Infof("RDA: DHT discovery disabled (using Grid-based subnet discovery)")
+	}
+
+	// Start STORE protocol handler (stream-based data distribution)
+	if err := s.storeProtocolHandler.Start(startCtx); err != nil {
+		return fmt.Errorf("failed to start STORE protocol handler: %w", err)
+	}
+
+	// Start GET protocol handler (responds to queries from light nodes)
+	if err := s.getProtocolHandler.Start(startCtx); err != nil {
+		return fmt.Errorf("failed to start GET protocol handler: %w", err)
+	}
+
+	// Start SYNC protocol handler (responds to sync requests from new nodes)
+	if err := s.syncProtocolHandler.Start(startCtx); err != nil {
+		return fmt.Errorf("failed to start SYNC protocol handler: %w", err)
+	}
+
+	// Trigger SYNC on startup for new nodes (after discovery delay)
+	if s.syncProtocolRequester != nil {
+		go s.syncProtocolRequester.TriggerSyncOnStartup(startCtx)
 	}
 
 	// If using subnet discovery, announce to subnets
@@ -227,12 +293,41 @@ func (s *RDANodeService) Start(startCtx context.Context) error {
 	return nil
 }
 
+// SetLifecycle sets the lifecycle manager for coordinating subnet discovery completion
+// This is used to signal when subnet discovery has completed to prevent blocking OnStart hooks
+func (s *RDANodeService) SetLifecycle(lifecycle interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifecycle = lifecycle
+}
+
 // Stop stops all RDA components
 func (s *RDANodeService) Stop(stopCtx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.cancel()
+
+	// Stop STORE protocol handler
+	if s.storeProtocolHandler != nil {
+		if err := s.storeProtocolHandler.Stop(); err != nil {
+			log.Warnf("RDA STORE protocol handler stop error: %v", err)
+		}
+	}
+
+	// Stop GET protocol handler
+	if s.getProtocolHandler != nil {
+		if err := s.getProtocolHandler.Stop(); err != nil {
+			log.Warnf("RDA GET protocol handler stop error: %v", err)
+		}
+	}
+
+	// Stop SYNC protocol handler
+	if s.syncProtocolHandler != nil {
+		if err := s.syncProtocolHandler.Stop(); err != nil {
+			log.Warnf("RDA SYNC protocol handler stop error: %v", err)
+		}
+	}
 
 	// Stop discovery first so no new connections are attempted
 	if s.discovery != nil {
@@ -319,6 +414,21 @@ func (s *RDANodeService) startSubnetDiscovery(startCtx context.Context) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
+	// GUARANTEE: Signal discovery completion if not already done (early signal after bootstrap)
+	// This ensures the OnStart hook completes quickly
+	defer func() {
+		if s.lifecycle != nil {
+			if lifecycleMgr, ok := s.lifecycle.(interface{ MarkSubnetDiscoveryReady(error) }); ok {
+				// Try to signal, but it's a no-op if already signalled (sync.Once inside MarkSubnetDiscoveryReady)
+				lifecycleMgr.MarkSubnetDiscoveryReady(nil)
+			}
+		}
+	}()
+
+	// Use service context for discovery operations so they can be cancelled on shutdown
+	// The 12-second timer in GetMembersWithDuration still limits gossip wait time
+	discoveryCtx := s.ctx
+
 	// Get this node's grid position
 	myPos := GetCoords(s.host.ID(), s.gridManager.GetGridDimensions())
 	rowSubnet := fmt.Sprintf("row/%d", myPos.Row)
@@ -339,43 +449,77 @@ func (s *RDANodeService) startSubnetDiscovery(startCtx context.Context) {
 		time.Sleep(3 * time.Second)
 		bootstrapRowPeers = s.bootstrapDiscovery.GetRowPeers()
 		bootstrapColPeers = s.bootstrapDiscovery.GetColPeers()
-		log.Infof("RDA bootstrap discovered: %d row peers, %d col peers", len(bootstrapRowPeers), len(bootstrapColPeers))
+		if len(bootstrapRowPeers) > 0 || len(bootstrapColPeers) > 0 {
+			log.Infof("📤 DISCOVERY SOURCE: BOOTSTRAP - row_peers=%d, col_peers=%d", len(bootstrapRowPeers), len(bootstrapColPeers))
+			for _, p := range bootstrapRowPeers {
+				log.Debugf("  └─ Row peer: %s", p.ID.String()[:12])
+			}
+			for _, p := range bootstrapColPeers {
+				log.Debugf("  └─ Col peer: %s", p.ID.String()[:12])
+			}
+		} else {
+			log.Warnf("⚠️  DISCOVERY SOURCE: BOOTSTRAP - No peers discovered (check bootstrap peer configuration)")
+		}
 	}
 
-	// ========== STEP 3: Gossip-based discovery (for redundancy) ==========
+	// ========== EARLY SIGNAL: After bootstrap, signal discovery readiness ==========
+	// This allows OnStart hook to complete quickly (avoid 20s timeout)
+	// Gossip discovery continues in background for additional peers
+	// Call the signal AFTER bootstrap completes but BEFORE gossip wait starts
+	if s.lifecycle != nil {
+		if lifecycleMgr, ok := s.lifecycle.(interface{ MarkSubnetDiscoveryReady(error) }); ok {
+			log.Infof("🚀 EARLY SIGNAL: RDA Subnet Discovery ready after bootstrap (gossip continues in background)")
+			lifecycleMgr.MarkSubnetDiscoveryReady(nil)
+		}
+	}
+
+	// ========== STEP 3: Gossip-based discovery (for redundancy, runs in background) ==========
 	var gossipRowPeers []SubnetMember
 	var gossipColPeers []SubnetMember
 
 	// Create announcers for row and column subnets
-	rowAnnouncer, err := s.subnetDiscoveryManager.GetOrCreateAnnouncer(startCtx, rowSubnet)
+	rowAnnouncer, err := s.subnetDiscoveryManager.GetOrCreateAnnouncer(discoveryCtx, rowSubnet)
 	if err != nil {
 		log.Warnf("RDA subnet discovery: failed to create row announcer: %v", err)
 	} else {
 		// Announce presence in row subnet
-		if err := rowAnnouncer.AnnounceJoin(startCtx); err != nil {
+		if err := rowAnnouncer.AnnounceJoin(discoveryCtx); err != nil {
 			log.Warnf("RDA subnet discovery: failed to announce to row subnet: %v", err)
 		}
-		// Collect gossip-based members
-		gossipRowPeers = rowAnnouncer.GetMembersAfterDelay(startCtx)
+		// Start periodic announcements (every 2 seconds for 20 seconds total)
+		rowAnnouncer.StartPeriodicAnnouncement(discoveryCtx, 2*time.Second, 20*time.Second)
+		// Collect gossip-based members - wait 12s for announcements to propagate
+		gossipRowPeers = rowAnnouncer.GetMembersWithDuration(discoveryCtx, 12*time.Second)
 	}
 
-	colAnnouncer, err := s.subnetDiscoveryManager.GetOrCreateAnnouncer(startCtx, colSubnet)
+	colAnnouncer, err := s.subnetDiscoveryManager.GetOrCreateAnnouncer(discoveryCtx, colSubnet)
 	if err != nil {
 		log.Warnf("RDA subnet discovery: failed to create col announcer: %v", err)
 	} else {
 		// Announce presence in column subnet
-		if err := colAnnouncer.AnnounceJoin(startCtx); err != nil {
+		if err := colAnnouncer.AnnounceJoin(discoveryCtx); err != nil {
 			log.Warnf("RDA subnet discovery: failed to announce to col subnet: %v", err)
 		}
-		// Collect gossip-based members
-		gossipColPeers = colAnnouncer.GetMembersAfterDelay(startCtx)
+		// Start periodic announcements (every 2 seconds for 20 seconds total)
+		colAnnouncer.StartPeriodicAnnouncement(discoveryCtx, 2*time.Second, 20*time.Second)
+		// Collect gossip-based members - wait 12s for announcements to propagate
+		gossipColPeers = colAnnouncer.GetMembersWithDuration(discoveryCtx, 12*time.Second)
 	}
 
-	log.Infof("RDA Subnet Discovery: gossip found %d row peers, %d col peers",
-		len(gossipRowPeers), len(gossipColPeers))
+	if len(gossipRowPeers) > 0 || len(gossipColPeers) > 0 {
+		log.Infof("📚 DISCOVERY SOURCE: GOSSIP - row_peers=%d, col_peers=%d", len(gossipRowPeers), len(gossipColPeers))
+		for _, m := range gossipRowPeers {
+			log.Debugf("  └─ Row peer: %s", m.PeerID.String()[:12])
+		}
+		for _, m := range gossipColPeers {
+			log.Debugf("  └─ Col peer: %s", m.PeerID.String()[:12])
+		}
+	} else {
+		log.Warnf("⚠️  DISCOVERY SOURCE: GOSSIP - No peers discovered from gossip subnets")
+	}
 
 	// ========== STEP 4: Combine bootstrap + gossip results & connect ==========
-	s.connectToAllDiscoveredPeers(startCtx, bootstrapRowPeers, bootstrapColPeers, gossipRowPeers, gossipColPeers)
+	s.connectToAllDiscoveredPeers(discoveryCtx, bootstrapRowPeers, bootstrapColPeers, gossipRowPeers, gossipColPeers)
 
 	// Monitor for new members via gossip
 	if rowAnnouncer != nil && colAnnouncer != nil {
@@ -435,13 +579,19 @@ func (s *RDANodeService) connectToAllDiscoveredPeers(
 	}
 
 	log.Infof(
-		"RDA: discovery sources summary - bootstrap(row=%d,col=%d), gossip(row=%d,col=%d)",
+		"✅ DISCOVERY COMPLETE - bootstrap_row=%d + gossip_row=%d = total_row=%d | bootstrap_col=%d + gossip_col=%d = total_col=%d",
 		len(bootstrapRowPeers),
-		len(bootstrapColPeers),
 		len(gossipRowPeers),
+		len(rowPeers),
+		len(bootstrapColPeers),
 		len(gossipColPeers),
+		len(colPeers),
 	)
-	log.Infof("RDA: total discovered peers - rows: %d, cols: %d", len(rowPeers), len(colPeers))
+	if len(rowPeers) > 0 || len(colPeers) > 0 {
+		log.Infof("🎯 FINAL PEER COUNT - rows: %d, cols: %d", len(rowPeers), len(colPeers))
+	} else {
+		log.Warnf("❌ NO PEERS DISCOVERED - Check bootstrap configuration and gossip subnet connectivity")
+	}
 
 	// Connect to discovered members
 	connCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -671,6 +821,114 @@ func (s *RDANodeService) FilterPeerList(peers []peer.ID) []peer.ID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.peerFilter.FilterPeers(peers)
+}
+
+// ============================================================================
+// STORE Protocol API
+// ============================================================================
+
+// GetStoreProtocolHandler returns the STORE protocol handler
+func (s *RDANodeService) GetStoreProtocolHandler() *RDAStoreProtocolHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storeProtocolHandler
+}
+
+// GetStoreProposer returns the STORE proposer (for bridge nodes)
+func (s *RDANodeService) GetStoreProposer() *RDAStoreProposer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storeProposer
+}
+
+// DistributeBlock distributes a block across the grid using STORE protocol
+// Called by bridge/full nodes when a new block is produced
+func (s *RDANodeService) DistributeBlock(ctx context.Context, handle string, height uint64, shares []*RDASymbol) error {
+	if s.storeProposer == nil {
+		return fmt.Errorf("store proposer not available")
+	}
+	return s.storeProposer.DistributeBlock(ctx, handle, height, shares)
+}
+
+// GetStoreStats returns statistics for STORE operations
+func (s *RDANodeService) GetStoreStats() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.storeProtocolHandler == nil {
+		return make(map[string]interface{})
+	}
+	return s.storeProtocolHandler.GetStoreStats()
+}
+
+// GetGetProtocolHandler returns the GET protocol handler
+func (s *RDANodeService) GetGetProtocolHandler() *RDAGetProtocolHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getProtocolHandler
+}
+
+// GetGetProtocolRequester returns the GET protocol requester
+func (s *RDANodeService) GetGetProtocolRequester() *RDAGetProtocolRequester {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getProtocolRequester
+}
+
+// QueryShare is the main entry point for light nodes to query a share
+// Replaces traditional DAS worker with 1-hop RDA grid query
+func (s *RDANodeService) QueryShare(ctx context.Context, handle string, shareIndex uint32) (*RDASymbol, error) {
+	if s.getProtocolRequester == nil {
+		return nil, fmt.Errorf("get protocol requester not available")
+	}
+	return s.getProtocolRequester.QueryShare(ctx, handle, shareIndex)
+}
+
+// GetGetStats returns statistics for GET operations
+func (s *RDANodeService) GetGetStats() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.getProtocolHandler == nil {
+		return make(map[string]interface{})
+	}
+	return s.getProtocolHandler.GetStats()
+}
+
+// GetSyncProtocolHandler returns the SYNC protocol handler
+func (s *RDANodeService) GetSyncProtocolHandler() *RDASyncProtocolHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncProtocolHandler
+}
+
+// GetSyncProtocolRequester returns the SYNC protocol requester
+func (s *RDANodeService) GetSyncProtocolRequester() *RDASyncProtocolRequester {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncProtocolRequester
+}
+
+// GetSyncStats returns statistics for SYNC operations
+func (s *RDANodeService) GetSyncStats() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.syncProtocolRequester == nil {
+		return make(map[string]interface{})
+	}
+	return s.syncProtocolRequester.GetStats()
+}
+
+// IsSynced returns whether this node has completed initial column sync
+func (s *RDANodeService) IsSynced() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.syncProtocolRequester == nil {
+		return false
+	}
+	return s.syncProtocolRequester.IsSynced()
 }
 
 // RDAIntegrationExample shows how to integrate RDA into nodebuilder

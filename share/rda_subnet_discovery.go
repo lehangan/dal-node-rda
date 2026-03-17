@@ -156,7 +156,7 @@ func (sa *SubnetAnnouncer) listenAnnouncements(ctx context.Context) {
 	}
 }
 
-// AnnounceJoin broadcasts this node's presence to the subnet
+// AnnounceJoin broadcasts this node's presence to the subnet (once)
 func (sa *SubnetAnnouncer) AnnounceJoin(ctx context.Context) error {
 	announcement := SubnetAnnouncement{
 		NodeID:    sa.myID.String(),
@@ -174,12 +174,66 @@ func (sa *SubnetAnnouncer) AnnounceJoin(ctx context.Context) error {
 	return sa.pubsub.Publish(topic, data)
 }
 
+// StartPeriodicAnnouncement begins periodic announcements for duration
+// Broadcasts this node's presence every interval for totalDuration
+func (sa *SubnetAnnouncer) StartPeriodicAnnouncement(ctx context.Context, interval, totalDuration time.Duration) {
+	sa.wg.Add(1)
+	go func() {
+		defer sa.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		timeout := time.NewTimer(totalDuration)
+		defer timeout.Stop()
+
+		for {
+			select {
+			case <-timeout.C:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				announcement := SubnetAnnouncement{
+					NodeID:    sa.myID.String(),
+					PeerAddrs: sa.myAddrs,
+					Timestamp: time.Now().UnixNano(),
+					Role:      "normal",
+				}
+				data, err := serializeAnnouncement(&announcement)
+				if err == nil {
+					topic := fmt.Sprintf("rda/subnet/%s/announce", sa.subnet)
+					_ = sa.pubsub.Publish(topic, data)
+				}
+			}
+		}
+	}()
+}
+
 // GetMembersAfterDelay waits for delay period, then collects all discovered members.
 // This implements the "delayed pull" mechanism from the RDA paper.
 func (sa *SubnetAnnouncer) GetMembersAfterDelay(ctx context.Context) []SubnetMember {
 	// Wait for delay period to allow announcements to propagate
 	select {
 	case <-time.After(sa.delayBeforePull):
+	case <-ctx.Done():
+		return nil
+	}
+
+	sa.mu.RLock()
+	defer sa.mu.RUnlock()
+
+	members := make([]SubnetMember, 0, len(sa.members))
+	for _, m := range sa.members {
+		members = append(members, m)
+	}
+	return members
+}
+
+// GetMembersWithDuration waits for customWaitDuration, then collects all discovered members.
+// Used by light nodes to wait longer for peer discovery from gossip subnets.
+func (sa *SubnetAnnouncer) GetMembersWithDuration(ctx context.Context, waitDuration time.Duration) []SubnetMember {
+	// Wait for custom duration to allow announcements to propagate
+	select {
+	case <-time.After(waitDuration):
 	case <-ctx.Done():
 		return nil
 	}

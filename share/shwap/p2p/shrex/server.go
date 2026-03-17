@@ -195,14 +195,14 @@ func (srv *Server) handleDataRequest(ctx context.Context, requestID request, str
 }
 
 // respondStatus returns the status written to stream and the size of the response.
-func respondStatus(log *zap.SugaredLogger, status shrexpb.Status, stream network.Stream) (status, int) {
-	written, err := serde.Write(stream, &shrexpb.Response{Status: status})
+func respondStatus(log *zap.SugaredLogger, respStatus shrexpb.Status, stream network.Stream) (status, int) {
+	written, err := serde.Write(stream, &shrexpb.Response{Status: respStatus})
 	if err != nil {
 		log.Errorw("sending response status", "err", err)
 		return statusSendStatusErr, written
 	}
 
-	switch status {
+	switch respStatus {
 	case shrexpb.Status_INTERNAL:
 		return statusInternalErr, written
 	case shrexpb.Status_NOT_FOUND:
