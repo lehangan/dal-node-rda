@@ -286,10 +286,12 @@ type BootstrapDiscoveryService struct {
 	myRow          uint32
 	myCol          uint32
 
-	mu           sync.RWMutex
-	routingTable *RoutingTable            // Routing table with capacity limits
-	rowPeers     map[string]peer.AddrInfo // Map of peer ID to peer info for row (client-side cache)
-	colPeers     map[string]peer.AddrInfo // Map of peer ID to peer info for column (client-side cache)
+	mu               sync.RWMutex
+	routingTable     *RoutingTable                        // Routing table with capacity limits
+	rowPeers         map[string]peer.AddrInfo             // Map of peer ID to peer info for row (client-side cache)
+	colPeers         map[string]peer.AddrInfo             // Map of peer ID to peer info for column (client-side cache)
+	rowPeerPositions map[string]struct{ Row, Col uint32 } // Grid positions for row peers
+	colPeerPositions map[string]struct{ Row, Col uint32 } // Grid positions for col peers
 
 	// Bootstrap-to-bootstrap sync
 	peerBootstraps map[string]peer.AddrInfo // Other bootstrap servers for sync
@@ -306,16 +308,18 @@ func NewBootstrapDiscoveryService(
 	myRow, myCol uint32,
 ) *BootstrapDiscoveryService {
 	return &BootstrapDiscoveryService{
-		host:           h,
-		bootstrapPeers: bootstrapPeers,
-		gridManager:    gridManager,
-		myRow:          myRow,
-		myCol:          myCol,
-		routingTable:   NewRoutingTable(RoutingTableCapacity),
-		rowPeers:       make(map[string]peer.AddrInfo),
-		colPeers:       make(map[string]peer.AddrInfo),
-		peerBootstraps: make(map[string]peer.AddrInfo),
-		done:           make(chan struct{}),
+		host:             h,
+		bootstrapPeers:   bootstrapPeers,
+		gridManager:      gridManager,
+		myRow:            myRow,
+		myCol:            myCol,
+		routingTable:     NewRoutingTable(RoutingTableCapacity),
+		rowPeers:         make(map[string]peer.AddrInfo),
+		colPeers:         make(map[string]peer.AddrInfo),
+		rowPeerPositions: make(map[string]struct{ Row, Col uint32 }),
+		colPeerPositions: make(map[string]struct{ Row, Col uint32 }),
+		peerBootstraps:   make(map[string]peer.AddrInfo),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -643,6 +647,7 @@ func (b *BootstrapDiscoveryService) contactBootstrapPeer(ctx context.Context, bo
 			}
 			if addrInfo, err := peerToAddrInfo(p); err == nil {
 				b.rowPeers[p.PeerID] = addrInfo
+				b.rowPeerPositions[p.PeerID] = struct{ Row, Col uint32 }{Row: p.Position.Row, Col: p.Position.Col}
 			}
 		}
 		b.mu.Unlock()
@@ -663,6 +668,7 @@ func (b *BootstrapDiscoveryService) contactBootstrapPeer(ctx context.Context, bo
 			}
 			if addrInfo, err := peerToAddrInfo(p); err == nil {
 				b.colPeers[p.PeerID] = addrInfo
+				b.colPeerPositions[p.PeerID] = struct{ Row, Col uint32 }{Row: p.Position.Row, Col: p.Position.Col}
 			}
 		}
 		b.mu.Unlock()
@@ -804,6 +810,66 @@ func (b *BootstrapDiscoveryService) GetColPeers() []peer.AddrInfo {
 	for peerID, p := range b.colPeers {
 		if peerID != selfID {
 			peers = append(peers, p)
+		}
+	}
+	return peers
+}
+
+// GetRowPeersDetailed returns row peers with their grid positions
+func (b *BootstrapDiscoveryService) GetRowPeersDetailed() []struct {
+	PeerID   string
+	Row, Col uint32
+} {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	selfID := b.host.ID().String()
+	peers := make([]struct {
+		PeerID   string
+		Row, Col uint32
+	}, 0, len(b.rowPeers))
+
+	for peerID := range b.rowPeers {
+		if peerID != selfID {
+			pos := b.rowPeerPositions[peerID]
+			peers = append(peers, struct {
+				PeerID   string
+				Row, Col uint32
+			}{
+				PeerID: peerID[:12],
+				Row:    pos.Row,
+				Col:    pos.Col,
+			})
+		}
+	}
+	return peers
+}
+
+// GetColPeersDetailed returns column peers with their grid positions
+func (b *BootstrapDiscoveryService) GetColPeersDetailed() []struct {
+	PeerID   string
+	Row, Col uint32
+} {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	selfID := b.host.ID().String()
+	peers := make([]struct {
+		PeerID   string
+		Row, Col uint32
+	}, 0, len(b.colPeers))
+
+	for peerID := range b.colPeers {
+		if peerID != selfID {
+			pos := b.colPeerPositions[peerID]
+			peers = append(peers, struct {
+				PeerID   string
+				Row, Col uint32
+			}{
+				PeerID: peerID[:12],
+				Row:    pos.Row,
+				Col:    pos.Col,
+			})
 		}
 	}
 	return peers

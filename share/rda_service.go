@@ -3,6 +3,7 @@ package share
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -446,17 +447,34 @@ func (s *RDANodeService) startSubnetDiscovery(startCtx context.Context) {
 		log.Warnf("RDA bootstrap discovery failed to start: %v", err)
 	} else {
 		// Wait for bootstrap discovery to complete (only contacts if bootstrap peers configured)
-		time.Sleep(3 * time.Second)
+		// Allow 8 seconds for bootstrap nodes to join all row subnets and build routing tables
+		// With 128 rows @ ~100ms per join + network latency: 12-15s needed, so 8s is minimum for fast networks
+		time.Sleep(8 * time.Second)
 		bootstrapRowPeers = s.bootstrapDiscovery.GetRowPeers()
 		bootstrapColPeers = s.bootstrapDiscovery.GetColPeers()
+		bootstrapRowDetailed := s.bootstrapDiscovery.GetRowPeersDetailed()
+		bootstrapColDetailed := s.bootstrapDiscovery.GetColPeersDetailed()
+
 		if len(bootstrapRowPeers) > 0 || len(bootstrapColPeers) > 0 {
-			log.Infof("📤 DISCOVERY SOURCE: BOOTSTRAP - row_peers=%d, col_peers=%d", len(bootstrapRowPeers), len(bootstrapColPeers))
-			for _, p := range bootstrapRowPeers {
-				log.Debugf("  └─ Row peer: %s", p.ID.String()[:12])
+			// Format detailed peer info with positions
+			var rowDetails, colDetails string
+			if len(bootstrapRowDetailed) > 0 {
+				for i, p := range bootstrapRowDetailed {
+					if i > 0 {
+						rowDetails += ", "
+					}
+					rowDetails += fmt.Sprintf("%s@(%d,%d)", p.PeerID, p.Row, p.Col)
+				}
 			}
-			for _, p := range bootstrapColPeers {
-				log.Debugf("  └─ Col peer: %s", p.ID.String()[:12])
+			if len(bootstrapColDetailed) > 0 {
+				for i, p := range bootstrapColDetailed {
+					if i > 0 {
+						colDetails += ", "
+					}
+					colDetails += fmt.Sprintf("%s@(%d,%d)", p.PeerID, p.Row, p.Col)
+				}
 			}
+			log.Infof("📤 DISCOVERY SOURCE: BOOTSTRAP - row_peers=%d [%s], col_peers=%d [%s]", len(bootstrapRowPeers), rowDetails, len(bootstrapColPeers), colDetails)
 		} else {
 			log.Warnf("⚠️  DISCOVERY SOURCE: BOOTSTRAP - No peers discovered (check bootstrap peer configuration)")
 		}
@@ -507,13 +525,25 @@ func (s *RDANodeService) startSubnetDiscovery(startCtx context.Context) {
 	}
 
 	if len(gossipRowPeers) > 0 || len(gossipColPeers) > 0 {
-		log.Infof("📚 DISCOVERY SOURCE: GOSSIP - row_peers=%d, col_peers=%d", len(gossipRowPeers), len(gossipColPeers))
-		for _, m := range gossipRowPeers {
-			log.Debugf("  └─ Row peer: %s", m.PeerID.String()[:12])
+		// Format gossip peer IDs
+		var rowGossipStr, colGossipStr string
+		if len(gossipRowPeers) > 0 {
+			for i, m := range gossipRowPeers {
+				if i > 0 {
+					rowGossipStr += ", "
+				}
+				rowGossipStr += m.PeerID.String()[:12]
+			}
 		}
-		for _, m := range gossipColPeers {
-			log.Debugf("  └─ Col peer: %s", m.PeerID.String()[:12])
+		if len(gossipColPeers) > 0 {
+			for i, m := range gossipColPeers {
+				if i > 0 {
+					colGossipStr += ", "
+				}
+				colGossipStr += m.PeerID.String()[:12]
+			}
 		}
+		log.Infof("📚 DISCOVERY SOURCE: GOSSIP - row_peers=%d [%s], col_peers=%d [%s]", len(gossipRowPeers), rowGossipStr, len(gossipColPeers), colGossipStr)
 	} else {
 		log.Warnf("⚠️  DISCOVERY SOURCE: GOSSIP - No peers discovered from gossip subnets")
 	}
@@ -587,8 +617,31 @@ func (s *RDANodeService) connectToAllDiscoveredPeers(
 		len(gossipColPeers),
 		len(colPeers),
 	)
+
+	// Show final peer list
 	if len(rowPeers) > 0 || len(colPeers) > 0 {
-		log.Infof("🎯 FINAL PEER COUNT - rows: %d, cols: %d", len(rowPeers), len(colPeers))
+		rowPeerInfo := make([]string, len(rowPeers))
+		for i, p := range rowPeers {
+			rowPeerInfo[i] = p.ID.String()[:12]
+		}
+		colPeerInfo := make([]string, len(colPeers))
+		for i, p := range colPeers {
+			colPeerInfo[i] = p.ID.String()[:12]
+		}
+
+		var rowStr, colStr string
+		if len(rowPeerInfo) > 0 {
+			rowStr = strings.Join(rowPeerInfo, ", ")
+		} else {
+			rowStr = "none"
+		}
+		if len(colPeerInfo) > 0 {
+			colStr = strings.Join(colPeerInfo, ", ")
+		} else {
+			colStr = "none"
+		}
+
+		log.Infof("🎯 FINAL PEER COUNT - rows: %d [%s], cols: %d [%s]", len(rowPeers), rowStr, len(colPeers), colStr)
 	} else {
 		log.Warnf("❌ NO PEERS DISCOVERED - Check bootstrap configuration and gossip subnet connectivity")
 	}
