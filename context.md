@@ -117,3 +117,14 @@ Note: adjust exact tag and test name filters based on available tests in nodebui
 - `make test-unit`: PASS
 
 Current Linux confidence after stabilization: integration targets in context and build/unit checks are green.
+
+## 10. Docker image development track (next)
+
+- Build deployment image from repository Dockerfile:
+  - `docker build -t celestia-node:rda-implement-das .`
+- Smoke-test image binaries:
+  - `docker run --rm --entrypoint /bin/celestia celestia-node:rda-implement-das version`
+- Smoke-test container runtime path with RDA env wiring:
+  - `docker run --rm -e NODE_TYPE=light -e P2P_NETWORK=mocha -e RDA_EXPECTED_NODES=16 celestia-node:rda-implement-das celestia light --help`
+- Optional publish path:
+  - `docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/<repo>:rda-implement-das --push .`

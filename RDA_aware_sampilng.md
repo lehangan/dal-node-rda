@@ -500,16 +500,20 @@ RDA-aware DAS becomes:
 ## 13) Rollout and Safety Controls
 
 - [ ] Start with hybrid mode in testnet/staging.
-- [ ] Add kill switch to force classic mode at runtime config level.
-- [ ] Define SLO-based rollback triggers:
-  - [ ] high fallback ratio
-  - [ ] catchup lag increase
-  - [ ] failure/retry explosion
-- [ ] Write runbook for mode switching and checkpoint handling.
-- [ ] Add explicit rollback procedure for robust distributed array mode:
-  - [ ] set mode to classic
-  - [ ] preserve checkpoint backup
-  - [ ] verify catchup recovery in classic mode
+- [ ] Build and smoke-test Docker image for RDA-aware DAS deployment path.
+  - [ ] Build image from repository Dockerfile.
+  - [ ] Verify container binary with `celestia version` using image entrypoint override.
+  - [ ] Verify runtime config injection path (`RDA_EXPECTED_NODES`) in container startup.
+- [x] Add kill switch to force classic mode at runtime config level.
+- [x] Define SLO-based rollback triggers:
+  - [x] high fallback ratio
+  - [x] catchup lag increase
+  - [x] failure/retry explosion
+- [x] Write runbook for mode switching and checkpoint handling.
+- [x] Add explicit rollback procedure for robust distributed array mode:
+  - [x] set mode to classic
+  - [x] preserve checkpoint backup
+  - [x] verify catchup recovery in classic mode
 
 ## 14) Suggested Execution Order (practical)
 
@@ -535,8 +539,8 @@ RDA-aware DAS becomes:
 - [ ] Checkpoint resume works for restart scenarios.
 - [ ] Metrics and API provide actionable operational insight.
 - [ ] Test suites (unit + integration + regression) are green.
-- [ ] Operational runbook exists for deployment and rollback.
-- [ ] Documentation explicitly states: RDA = Robust Distributed Array.
+- [x] Operational runbook exists for deployment and rollback.
+- [x] Documentation explicitly states: RDA = Robust Distributed Array.
 
 ## 15.1 Non-functional acceptance gates
 
