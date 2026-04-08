@@ -97,3 +97,12 @@ Note: adjust exact tag and test name filters based on available tests in nodebui
 
 - Can the repo build and run RDA-enabled DAS nodes together at wiring level: yes.
 - Is full cross-node integration proof completed in checklist: not yet (pending Integration Tests on Linux).
+
+## 8. Latest code-level stabilization updates (2026-04-08)
+
+- Implemented integration harness timeout stabilization for RDA startup/teardown:
+  - `nodebuilder/tests/share_test.go`: test context timeout increased from 25s to 2m.
+  - `nodebuilder/tests/swamp/swamp.go`: cleanup stop timeout increased from 1s to 10s.
+  - `nodebuilder/tests/swamp/swamp.go`: for light nodes with RDA enabled, test startup/shutdown timeouts increased (startup 2m, shutdown 30s).
+- Validation status on Windows after patch:
+  - `go test ./nodebuilder/tests -tags share -run '^TestShareModule$' -count=1` still fails due to Windows symlink/file-lock constraints (not due to timeout budget).

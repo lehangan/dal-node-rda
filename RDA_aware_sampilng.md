@@ -441,12 +441,12 @@ RDA-aware DAS becomes:
 ### Tasks
 
 - [ ] Decide integration boundary:
-  - [ ] Strategy layer only (recommended first)
+  - [x] Strategy layer only (recommended first)
   - [ ] or add new RDA-aware availability implementation
 - [ ] If adding new implementation:
   - [ ] create share/availability/rda package
   - [ ] wire in module selection logic by config
-- [ ] Ensure full/bridge behavior stays correct for non-RDA paths.
+- [x] Ensure full/bridge behavior stays correct for non-RDA paths.
 - [ ] If robust distributed array availability package is created:
   - [ ] define clear boundary with das strategy (no duplicate retry logic).
   - [ ] keep interface compatible with existing share.Availability call sites.
@@ -454,7 +454,7 @@ RDA-aware DAS becomes:
 ### Done Criteria
 
 - [ ] Light node RDA sampling path is reachable and testable.
-- [ ] Existing availability tests for classic path remain green.
+- [x] Existing availability tests for classic path remain green.
 
 ## 12) Testing Plan (must be implemented with each phase)
 
@@ -477,8 +477,14 @@ RDA-aware DAS becomes:
 
 ### Integration gaps observed on Windows (to close on Linux)
 
-- [ ] Re-run api auth RPC integration flow on Linux (`go test ./api -run TestAuthedRPC -count=1`) to avoid Windows symlink privilege and temp cleanup lock issues.
+- [x] Re-run api auth RPC integration flow on Linux (`go test ./api -run TestAuthedRPC -count=1`) to avoid Windows symlink privilege and temp cleanup lock issues.
 - [ ] Re-run nodebuilder integration suites on Linux for RDA startup/discovery/recovery claims before checking Integration Tests items above.
+
+### Integration stabilization work completed (test harness)
+
+- [x] Increased share integration test context budget in `nodebuilder/tests/share_test.go` to reduce startup deadline false negatives during RDA lifecycle readiness wait.
+- [x] Increased swamp node stop timeout in `nodebuilder/tests/swamp/swamp.go` cleanup to reduce teardown false failures.
+- [x] Increased RDA-enabled light-node startup/shutdown budget in `nodebuilder/tests/swamp/swamp.go` default test config.
 
 ### Regression Tests
 

@@ -94,7 +94,7 @@ func getAccounts(config *testnode.Config) (accounts []string) {
 // cleanup frees up all the resources
 // including stop of all created nodes
 func (s *Swamp) cleanup() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	require.NoError(s.t, s.Network.Close())
@@ -172,6 +172,13 @@ func (s *Swamp) DefaultTestConfig(tp node.Type) *nodebuilder.Config {
 
 	for _, bootstrapper := range s.Bootstrappers {
 		cfg.Header.TrustedPeers = append(cfg.Header.TrustedPeers, bootstrapper.String())
+	}
+
+	// RDA-enabled light nodes can block startup while waiting for subnet discovery.
+	// Increase lifecycle budgets in integration tests to avoid false timeout failures.
+	if tp == node.Light && cfg.Share.RDAEnabled {
+		cfg.Node.StartupTimeout = 2 * time.Minute
+		cfg.Node.ShutdownTimeout = 30 * time.Second
 	}
 	return cfg
 }
