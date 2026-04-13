@@ -21,7 +21,7 @@ func newRDAServiceAdapter(service *sharecore.RDANodeService) moddas.RDAAdapter {
 
 func (a *rdaServiceAdapter) QuerySymbol(ctx context.Context, handle string, shareIndex uint32) (*moddas.RDASymbol, error) {
 	if !a.service.IsSubnetDiscoveryReady() {
-		return nil, fmt.Errorf("rda adapter: subnet discovery not ready")
+		return nil, fmt.Errorf("rda adapter: %w", sharecore.ErrSubnetNotInitialized)
 	}
 
 	sym, err := a.service.QueryShare(ctx, handle, shareIndex)
@@ -42,7 +42,7 @@ func (a *rdaServiceAdapter) QuerySymbol(ctx context.Context, handle string, shar
 
 func (a *rdaServiceAdapter) SyncColumn(ctx context.Context, sinceHeight uint64) error {
 	if !a.service.IsSubnetDiscoveryReady() {
-		return fmt.Errorf("rda adapter: subnet discovery not ready")
+		return fmt.Errorf("rda adapter: %w", sharecore.ErrSubnetNotInitialized)
 	}
 
 	return a.service.SyncColumn(ctx, sinceHeight)

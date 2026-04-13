@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"sync"
@@ -18,6 +19,24 @@ import (
 )
 
 var getLog = logging.Logger("rda.get")
+
+func shortHandle(handle string) string {
+	if len(handle) <= 8 {
+		return handle
+	}
+	return handle[:8]
+}
+
+func shortPeerID(id peer.ID) string {
+	if id == "" {
+		return ""
+	}
+	s := id.String()
+	if len(s) <= 8 {
+		return s
+	}
+	return s[:8]
+}
 
 // ============================================================================
 // GET Protocol Definition - Phase 3: Query Sampling
@@ -148,27 +167,27 @@ func (h *RDAGetProtocolHandler) handleGetStream(stream network.Stream) {
 	defer stream.Close()
 
 	remoteID := stream.Conn().RemotePeer()
-	getLog.Debugf("RDA|GET|STREAM_OPEN peer=%s", remoteID.String()[:8])
+	getLog.Debugf("RDA|GET|STREAM_OPEN peer=%s", shortPeerID(remoteID))
 
 	// Đọc thông điệp
 	var msg GetMessage
 	decoder := json.NewDecoder(stream)
 	if err := decoder.Decode(&msg); err != nil {
-		getLog.Warnf("RDA|GET|DECODE_ERROR peer=%s error=%v", remoteID.String()[:8], err)
+		getLog.Warnf("RDA|GET|DECODE_ERROR peer=%s error=%v", shortPeerID(remoteID), err)
 		return
 	}
 
 	if msg.Type != GetMessageTypeQuery {
-		getLog.Warnf("RDA|GET|TYPE_ERROR expected=query got=%s from=%s", msg.Type, remoteID.String()[:8])
+		getLog.Warnf("RDA|GET|TYPE_ERROR expected=query got=%s from=%s requestID=%s", msg.Type, shortPeerID(remoteID), msg.RequestID)
 		return
 	}
 
 	h.totalGetReceived++
 	getLog.Debugf("RDA|GET|RECEIVE peer=%s handle=%s index=%d requestID=%s",
-		remoteID.String()[:8], msg.Handle[:8], msg.ShareIndex, msg.RequestID)
+		shortPeerID(remoteID), shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID)
 
 	// ========== BƯỚC 1: LOOKUP DATABASE ==========
-	getLog.Debugf("RDA|GET|LOOKUP_START handle=%s index=%d", msg.Handle[:8], msg.ShareIndex)
+	getLog.Debugf("RDA|GET|LOOKUP_START handle=%s index=%d requestID=%s", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -178,17 +197,19 @@ func (h *RDAGetProtocolHandler) handleGetStream(stream network.Stream) {
 
 	if err != nil || len(shareData) == 0 {
 		h.totalNotFound++
-		getLog.Warnf("RDA|GET|NOT_FOUND handle=%s index=%d error=%v",
-			msg.Handle[:8], msg.ShareIndex, err)
+		targetCol := Cell(msg.ShareIndex, uint32(h.gridManager.GetGridDimensions().Cols))
+		myPos, _ := h.gridManager.GetPeerPosition(h.host.ID())
+		getLog.Warnf("RDA|GET|NOT_FOUND handle=%s index=%d requestID=%s targetCol=%d localPos=(%d,%d) peer=%s error=%v",
+			shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, targetCol, myPos.Row, myPos.Col, shortPeerID(remoteID), err)
 
 		// Trả thông báo "không có" (khống response lại)
 		return
 	}
 
-	getLog.Debugf("RDA|GET|FOUND ✓ handle=%s index=%d size=%d", msg.Handle[:8], msg.ShareIndex, len(shareData))
+	getLog.Debugf("RDA|GET|FOUND ✓ handle=%s index=%d requestID=%s size=%d", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, len(shareData))
 
 	// ========== BƯỚC 2: VALIDATE VỚI PRED ==========
-	getLog.Debugf("RDA|GET|VALIDATE_START handle=%s index=%d", msg.Handle[:8], msg.ShareIndex)
+	getLog.Debugf("RDA|GET|VALIDATE_START handle=%s index=%d requestID=%s", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID)
 
 	symbol := &RDASymbol{
 		Handle:      msg.Handle,
@@ -207,14 +228,14 @@ func (h *RDAGetProtocolHandler) handleGetStream(stream network.Stream) {
 
 	if !h.predicateChk.Pred(msg.Handle, msg.ShareIndex, symbol) {
 		h.failedValidations++
-		getLog.Warnf("RDA|GET|VALIDATE_FAIL handle=%s index=%d reason=pred", msg.Handle[:8], msg.ShareIndex)
+		getLog.Warnf("RDA|GET|VALIDATE_FAIL handle=%s index=%d requestID=%s reason=pred", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID)
 		return
 	}
 
-	getLog.Debugf("RDA|GET|VALIDATE_OK ✓ handle=%s index=%d", msg.Handle[:8], msg.ShareIndex)
+	getLog.Debugf("RDA|GET|VALIDATE_OK ✓ handle=%s index=%d requestID=%s", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID)
 
 	// ========== BƯỚC 3: ASSEMBLE & SEND RESPONSE ==========
-	getLog.Debugf("RDA|GET|RESPONSE_BUILD handle=%s index=%d size=%d", msg.Handle[:8], msg.ShareIndex, len(shareData))
+	getLog.Debugf("RDA|GET|RESPONSE_BUILD handle=%s index=%d requestID=%s size=%d", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, len(shareData))
 
 	response := GetMessage{
 		Type:        GetMessageTypeResponse,
@@ -232,20 +253,20 @@ func (h *RDAGetProtocolHandler) handleGetStream(stream network.Stream) {
 
 	respData, err := json.Marshal(response)
 	if err != nil {
-		getLog.Warnf("RDA|GET|MARSHAL_ERROR handle=%s error=%v", msg.Handle[:8], err)
+		getLog.Warnf("RDA|GET|MARSHAL_ERROR handle=%s index=%d requestID=%s error=%v", shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, err)
 		return
 	}
 
 	if _, err := stream.Write(respData); err != nil {
-		getLog.Warnf("RDA|GET|SEND_ERROR peer=%s handle=%s error=%v", remoteID.String()[:8], msg.Handle[:8], err)
+		getLog.Warnf("RDA|GET|SEND_ERROR peer=%s handle=%s index=%d requestID=%s error=%v", shortPeerID(remoteID), shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, err)
 		return
 	}
 
 	h.totalGetResponded++
 	h.totalBytesTransfer += int64(len(respData))
 
-	getLog.Infof("RDA|GET|RESPONSE_SENT ✓ peer=%s handle=%s index=%d size=%d bytes",
-		remoteID.String()[:8], msg.Handle[:8], msg.ShareIndex, len(respData))
+	getLog.Infof("RDA|GET|RESPONSE_SENT ✓ peer=%s handle=%s index=%d requestID=%s size=%d bytes",
+		shortPeerID(remoteID), shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, len(respData))
 }
 
 // GetStats trả về statistics
@@ -387,7 +408,7 @@ func (r *RDAGetProtocolRequester) QueryShare(
 
 	myRow := uint32(myPos.Row)
 	getLog.Infof("RDA|GET|QUERY_START handle=%s index=%d targetCol=%d myRow=%d",
-		handle[:8], shareIndex, targetCol, myRow)
+		shortHandle(handle), shareIndex, targetCol, myRow)
 
 	// Step 2: Find peers at (myRow, targetCol) intersection
 	intersectionPeers := r.findIntersectionPeers(myRow, targetCol)
@@ -406,16 +427,16 @@ func (r *RDAGetProtocolRequester) QueryShare(
 
 	var lastErr error
 	for attempt := 0; attempt < r.retryAttempts; attempt++ {
-		for _, peer := range intersectionPeers {
-			symbol, err := sendFn(ctx, peer, handle, shareIndex)
+		for _, targetPeer := range intersectionPeers {
+			symbol, err := sendFn(ctx, targetPeer, handle, shareIndex)
 			if err == nil {
 				r.successfulGets++
 				getLog.Infof("RDA|GET|SUCCESS ✓ handle=%s index=%d peer=%s attempt=%d",
-					handle[:8], shareIndex, peer.String()[:8], attempt+1)
+					shortHandle(handle), shareIndex, shortPeerID(targetPeer), attempt+1)
 				return symbol, nil
 			}
 			lastErr = err
-			getLog.Debugf("RDA|GET|RETRY peer=%s attempt=%d error=%v", peer.String()[:8], attempt+1, err)
+			getLog.Debugf("RDA|GET|RETRY peer=%s handle=%s index=%d attempt=%d error=%v", shortPeerID(targetPeer), shortHandle(handle), shareIndex, attempt+1, err)
 		}
 
 		if attempt < r.retryAttempts-1 && r.shouldBackoff(lastErr) {
@@ -428,8 +449,8 @@ func (r *RDAGetProtocolRequester) QueryShare(
 	}
 
 	r.failedRetries++
-	getLog.Warnf("RDA|GET|FAILED_ALL handle=%s index=%d row=%d col=%d",
-		handle[:8], shareIndex, myRow, targetCol)
+	getLog.Warnf("RDA|GET|FAILED_ALL handle=%s index=%d row=%d col=%d retries=%d peers=%d last_error=%v",
+		shortHandle(handle), shareIndex, myRow, targetCol, r.retryAttempts, len(intersectionPeers), lastErr)
 	if lastErr != nil {
 		return nil, lastErr
 	}
@@ -443,13 +464,13 @@ func (r *RDAGetProtocolRequester) sendGetRequest(
 	handle string,
 	shareIndex uint32,
 ) (*RDASymbol, error) {
-	getLog.Debugf("RDA|GET|SEND_START peer=%s handle=%s index=%d", targetPeerID.String()[:8], handle[:8], shareIndex)
+	getLog.Debugf("RDA|GET|SEND_START peer=%s handle=%s index=%d", shortPeerID(targetPeerID), shortHandle(handle), shareIndex)
 
 	// Open stream
 	stream, err := r.host.NewStream(ctx, targetPeerID, RDAGetProtocolID)
 	if err != nil {
-		getLog.Warnf("RDA|GET|STREAM_ERROR peer=%s error=%v", targetPeerID.String()[:8], err)
-		return nil, fmt.Errorf("%w: failed to open stream to %s: %w", ErrRDAPeerUnavailable, targetPeerID.String()[:8], err)
+		getLog.Warnf("RDA|GET|STREAM_ERROR peer=%s handle=%s index=%d error=%v", shortPeerID(targetPeerID), shortHandle(handle), shareIndex, err)
+		return nil, fmt.Errorf("%w: failed to open stream to %s: %w", ErrRDAPeerUnavailable, shortPeerID(targetPeerID), err)
 	}
 	defer stream.Close()
 
@@ -468,21 +489,21 @@ func (r *RDAGetProtocolRequester) sendGetRequest(
 
 	// Send request
 	if err := stream.SetWriteDeadline(time.Now().Add(r.requestTimeout)); err != nil {
-		getLog.Warnf("RDA|GET|WRITE_DEADLINE_ERROR peer=%s error=%v", targetPeerID.String()[:8], err)
+		getLog.Warnf("RDA|GET|WRITE_DEADLINE_ERROR peer=%s reqID=%s error=%v", shortPeerID(targetPeerID), requestID, err)
 		return nil, fmt.Errorf("%w: failed to set write deadline: %w", ErrRDAProtocolDecode, err)
 	}
 
 	encoder := json.NewEncoder(stream)
 	if err := encoder.Encode(req); err != nil {
-		getLog.Warnf("RDA|GET|ENCODE_ERROR peer=%s error=%v", targetPeerID.String()[:8], err)
+		getLog.Warnf("RDA|GET|ENCODE_ERROR peer=%s reqID=%s handle=%s index=%d error=%v", shortPeerID(targetPeerID), requestID, shortHandle(handle), shareIndex, err)
 		return nil, fmt.Errorf("%w: failed to send request: %w", ErrRDAProtocolDecode, err)
 	}
 
-	getLog.Debugf("RDA|GET|SEND_OK peer=%s reqID=%s", targetPeerID.String()[:8], requestID)
+	getLog.Debugf("RDA|GET|SEND_OK peer=%s reqID=%s", shortPeerID(targetPeerID), requestID)
 
 	// Set stream read deadline for response
 	if err := stream.SetReadDeadline(time.Now().Add(r.requestTimeout)); err != nil {
-		getLog.Warnf("RDA|GET|DEADLINE_ERROR peer=%s error=%v", targetPeerID.String()[:8], err)
+		getLog.Warnf("RDA|GET|DEADLINE_ERROR peer=%s reqID=%s error=%v", shortPeerID(targetPeerID), requestID, err)
 		return nil, fmt.Errorf("%w: failed to set deadline: %w", ErrRDAProtocolDecode, err)
 	}
 
@@ -490,8 +511,13 @@ func (r *RDAGetProtocolRequester) sendGetRequest(
 	var resp GetMessage
 	decoder := json.NewDecoder(stream)
 	if err := decoder.Decode(&resp); err != nil {
-		getLog.Warnf("RDA|GET|RESPONSE_ERROR peer=%s timeout=%v error=%v",
-			targetPeerID.String()[:8], r.requestTimeout, err)
+		if errors.Is(err, io.EOF) {
+			getLog.Warnf("RDA|GET|RESPONSE_ERROR peer=%s reqID=%s handle=%s index=%d timeout=%v error=EOF hint=remote-closed-without-response",
+				shortPeerID(targetPeerID), requestID, shortHandle(handle), shareIndex, r.requestTimeout)
+		} else {
+			getLog.Warnf("RDA|GET|RESPONSE_ERROR peer=%s reqID=%s handle=%s index=%d timeout=%v error=%v",
+				shortPeerID(targetPeerID), requestID, shortHandle(handle), shareIndex, r.requestTimeout, err)
+		}
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			return nil, fmt.Errorf("%w: failed to decode response: %w", ErrRDAQueryTimeout, err)
@@ -500,12 +526,12 @@ func (r *RDAGetProtocolRequester) sendGetRequest(
 	}
 
 	if err := validateGetResponse(req, resp); err != nil {
-		getLog.Warnf("RDA|GET|RESPONSE_INVALID peer=%s reqID=%s error=%v", targetPeerID.String()[:8], requestID, err)
+		getLog.Warnf("RDA|GET|RESPONSE_INVALID peer=%s reqID=%s handle=%s index=%d error=%v", shortPeerID(targetPeerID), requestID, shortHandle(handle), shareIndex, err)
 		return nil, err
 	}
 
 	// Validate response with Pred
-	getLog.Debugf("RDA|GET|VALIDATE handle=%s index=%d size=%d", handle[:8], resp.ShareIndex, len(resp.Data))
+	getLog.Debugf("RDA|GET|VALIDATE handle=%s index=%d reqID=%s size=%d", shortHandle(handle), resp.ShareIndex, requestID, len(resp.Data))
 
 	symbol := &RDASymbol{
 		Handle:     resp.Handle,
@@ -518,13 +544,13 @@ func (r *RDAGetProtocolRequester) sendGetRequest(
 	}
 
 	if !r.predicateChk.Pred(resp.Handle, resp.ShareIndex, symbol) {
-		getLog.Warnf("RDA|GET|VALIDATE_FAIL peer=%s handle=%s", targetPeerID.String()[:8], handle[:8])
+		getLog.Warnf("RDA|GET|VALIDATE_FAIL peer=%s reqID=%s handle=%s index=%d reason=pred", shortPeerID(targetPeerID), requestID, shortHandle(handle), shareIndex)
 		return nil, fmt.Errorf("%w: predicate validation failed", ErrRDAProofInvalid)
 	}
 
 	r.totalBytesReceived += int64(len(resp.Data))
 	getLog.Infof("RDA|GET|VALIDATED ✓ peer=%s handle=%s index=%d size=%d",
-		targetPeerID.String()[:8], handle[:8], resp.ShareIndex, len(resp.Data))
+		shortPeerID(targetPeerID), shortHandle(handle), resp.ShareIndex, len(resp.Data))
 
 	return symbol, nil
 }
@@ -605,6 +631,8 @@ func (r *RDAGetProtocolRequester) findIntersectionPeers(row, col uint32) []peer.
 	// Sử dụng row peers và col peers từ PeerManager
 	rowPeers := r.peerManager.GetRowPeers()
 	colPeers := r.peerManager.GetColPeers()
+	getLog.Debugf("RDA|GET|PEER_CANDIDATES target=(row=%d,col=%d) rowPeers=%d colPeers=%d",
+		row, col, len(rowPeers), len(colPeers))
 	_ = row
 	_ = col
 	return chooseQueryPeers(rowPeers, colPeers)

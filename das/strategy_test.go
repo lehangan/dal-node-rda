@@ -24,6 +24,7 @@ func TestClassifyRetryableDeterministic(t *testing.T) {
 		{name: "rda proof invalid", err: fmt.Errorf("wrapped: %w", share.ErrRDAProofInvalid), want: false},
 		{name: "rda symbol not found", err: fmt.Errorf("wrapped: %w", share.ErrRDASymbolNotFound), want: false},
 		{name: "rda protocol decode", err: fmt.Errorf("wrapped: %w", share.ErrRDAProtocolDecode), want: true},
+		{name: "subnet not initialized", err: fmt.Errorf("wrapped: %w", share.ErrSubnetNotInitialized), want: true},
 		{name: "generic", err: errors.New("temporary failure"), want: true},
 	}
 

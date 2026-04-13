@@ -76,7 +76,7 @@ func classifyRetryable(err error) bool {
 	}
 
 	if errors.Is(err, share.ErrSubnetNotInitialized) {
-		return false
+		return true
 	}
 
 	// Default behavior remains conservative for unknown errors.
