@@ -202,7 +202,25 @@ func (h *RDAGetProtocolHandler) handleGetStream(stream network.Stream) {
 		getLog.Warnf("RDA|GET|NOT_FOUND handle=%s index=%d requestID=%s targetCol=%d localPos=(%d,%d) peer=%s error=%v",
 			shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, targetCol, myPos.Row, myPos.Col, shortPeerID(remoteID), err)
 
-		// Trả thông báo "không có" (khống response lại)
+		// Return an explicit empty response so requester can classify symbol-not-found,
+		// instead of getting EOF from an early stream close.
+		notFound := GetMessage{
+			Type:        GetMessageTypeResponse,
+			Handle:      msg.Handle,
+			ShareIndex:  msg.ShareIndex,
+			RowID:       uint32(myPos.Row),
+			ColID:       uint32(myPos.Col),
+			Data:        nil,
+			NMTProof:    &NMTProofData{Nodes: [][]byte{}, RootHash: []byte(msg.Handle), NamespaceID: "rda"},
+			SenderID:    h.host.ID().String(),
+			Timestamp:   time.Now().UnixNano() / 1e6,
+			BlockHeight: 0,
+			RequestID:   msg.RequestID,
+		}
+		if encErr := json.NewEncoder(stream).Encode(notFound); encErr != nil {
+			getLog.Warnf("RDA|GET|NOT_FOUND_RESPONSE_ERROR handle=%s index=%d requestID=%s peer=%s error=%v",
+				shortHandle(msg.Handle), msg.ShareIndex, msg.RequestID, shortPeerID(remoteID), encErr)
+		}
 		return
 	}
 
@@ -627,15 +645,37 @@ func dedupeAndSortPeers(peers []peer.ID) []peer.ID {
 
 // findIntersectionPeers tìm tất cả peers tại (row, col)
 func (r *RDAGetProtocolRequester) findIntersectionPeers(row, col uint32) []peer.ID {
-	// Query grid để tìm peers tại giao điểm (row, col)
-	// Sử dụng row peers và col peers từ PeerManager
-	rowPeers := r.peerManager.GetRowPeers()
-	colPeers := r.peerManager.GetColPeers()
-	getLog.Debugf("RDA|GET|PEER_CANDIDATES target=(row=%d,col=%d) rowPeers=%d colPeers=%d",
-		row, col, len(rowPeers), len(colPeers))
-	_ = row
-	_ = col
-	return chooseQueryPeers(rowPeers, colPeers)
+	// Query grid by the requested target (row, col), then keep only connected peers.
+	rowPeers := r.gridManager.GetRowPeers(int(row))
+	colPeers := r.gridManager.GetColPeers(int(col))
+	candidates := chooseQueryPeers(rowPeers, colPeers)
+	if len(candidates) == 0 {
+		// Compatibility fallback: if grid-indexed lookup has not converged yet,
+		// use peer manager's local row/col view.
+		candidates = chooseQueryPeers(r.peerManager.GetRowPeers(), r.peerManager.GetColPeers())
+	}
+
+	filtered := make([]peer.ID, 0, len(candidates))
+	if r.host != nil {
+		for _, p := range candidates {
+			if p == r.selfPeerID {
+				continue
+			}
+			if r.host.Network().Connectedness(p) == network.Connected {
+				filtered = append(filtered, p)
+			}
+		}
+	}
+
+	getLog.Debugf("RDA|GET|PEER_CANDIDATES target=(row=%d,col=%d) rowPeers=%d colPeers=%d candidates=%d connected=%d",
+		row, col, len(rowPeers), len(colPeers), len(candidates), len(filtered))
+
+	if len(filtered) > 0 {
+		return filtered
+	}
+
+	// Keep deterministic ordering even if currently disconnected.
+	return candidates
 }
 
 // GetStats trả về statistics
