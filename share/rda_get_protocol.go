@@ -32,10 +32,10 @@ func shortPeerID(id peer.ID) string {
 		return ""
 	}
 	s := id.String()
-	if len(s) <= 8 {
+	if len(s) <= 12 {
 		return s
 	}
-	return s[:8]
+	return s[:8] + ".." + s[len(s)-4:]
 }
 
 // ============================================================================
@@ -685,6 +685,19 @@ func excludePeers(peers []peer.ID, excluded map[peer.ID]struct{}) []peer.ID {
 	return filtered
 }
 
+func (r *RDAGetProtocolRequester) isTargetColumnPeer(id peer.ID, targetCol uint32) bool {
+	if r.gridManager == nil {
+		return false
+	}
+
+	pos, ok := r.gridManager.GetPeerPosition(id)
+	if !ok {
+		return false
+	}
+
+	return uint32(pos.Col) == targetCol
+}
+
 func excludePeer(peers []peer.ID, excluded peer.ID) []peer.ID {
 	if len(peers) == 0 {
 		return nil
@@ -771,6 +784,24 @@ func (r *RDAGetProtocolRequester) findFallbackPeers(row, col uint32, existing []
 		excluded[p] = struct{}{}
 	}
 	candidates = excludePeers(candidates, excluded)
+
+	// Prefer peers known to be in target column. This avoids noisy wrong-column
+	// probes (which always fail symbol->column mapping) when topology is stale.
+	targetColumnCandidates := make([]peer.ID, 0, len(candidates))
+	unknownOrOther := make([]peer.ID, 0, len(candidates))
+	for _, p := range candidates {
+		if r.isTargetColumnPeer(p, col) {
+			targetColumnCandidates = append(targetColumnCandidates, p)
+			continue
+		}
+		unknownOrOther = append(unknownOrOther, p)
+	}
+
+	if len(targetColumnCandidates) > 0 {
+		candidates = targetColumnCandidates
+	} else {
+		candidates = unknownOrOther
+	}
 
 	if r.host == nil {
 		return candidates

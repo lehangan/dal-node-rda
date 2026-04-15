@@ -178,3 +178,29 @@ func TestQueryShare_ExpandPeersOnSymbolNotFound(t *testing.T) {
 	require.NotNil(t, symbol)
 	require.GreaterOrEqual(t, calls, 2)
 }
+
+func TestQueryShare_FallbackPrefersTargetColumnPeers(t *testing.T) {
+	r := makeTestRequesterForQueryShare()
+
+	targetCol := int(Cell(10, uint32(r.gridManager.GetGridDimensions().Cols)))
+	wrongColPeer := peer.ID("peer-wrong-col")
+	rightColPeer := peer.ID("peer-right-col")
+
+	r.gridManager.peerGrid[wrongColPeer.String()] = GridPosition{Row: r.peerManager.myPosition.Row, Col: 0}
+	r.gridManager.peerGrid[rightColPeer.String()] = GridPosition{Row: r.peerManager.myPosition.Row, Col: targetCol}
+
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][wrongColPeer] = peerInfo{id: wrongColPeer, position: GridPosition{Row: r.peerManager.myPosition.Row, Col: 0}}
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][rightColPeer] = peerInfo{id: rightColPeer, position: GridPosition{Row: r.peerManager.myPosition.Row, Col: targetCol}}
+
+	got := r.findFallbackPeers(uint32(r.peerManager.myPosition.Row), uint32(targetCol), nil)
+	require.NotEmpty(t, got)
+	require.Equal(t, rightColPeer, got[0])
+}
+
+func TestShortPeerID_UsesPrefixAndSuffix(t *testing.T) {
+	id := peer.ID("12D3KooWABCDEFGHIJKLMN")
+	short := shortPeerID(id)
+	full := id.String()
+	require.Greater(t, len(full), 12)
+	require.Equal(t, full[:8]+".."+full[len(full)-4:], short)
+}

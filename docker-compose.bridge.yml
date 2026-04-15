@@ -1,0 +1,217 @@
+version: "3.8"
+
+services:
+  bridge:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge
+    labels:
+      node.name: "bridge"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+      - CELESTIA_BOOTSTRAPPER=true
+    volumes:
+      - ./consensus/bridge:/home/celestia
+      - ./configs/bridge-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+    ports:
+      - "16758:26658"
+      - "1221:2121"
+      - "16558:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+  bridge2:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge2
+    labels:
+      node.name: "bridge2"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+      - CELESTIA_BOOTSTRAPPER=true
+    volumes:
+      - ./consensus/bridge2:/home/celestia
+      - ./configs/bridge2-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+    ports:
+      - "16759:26658"
+      - "1222:2121"
+      - "16559:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+  bridge3:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge3
+    labels:
+      node.name: "bridge3"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+      - CELESTIA_BOOTSTRAPPER=true
+    volumes:
+      - ./consensus/bridge3:/home/celestia
+      - ./configs/bridge3-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+    ports:
+      - "16760:26658"
+      - "1223:2121"
+      - "16560:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+  bridge4:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge4
+    labels:
+      node.name: "bridge4"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+    volumes:
+      - ./consensus/bridge4:/home/celestia
+      - ./configs/bridge4-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+
+    ports:
+      - "16761:26658"
+      - "1224:2121"
+      - "16561:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --p2p.bootnodes /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --rda-bootstrap-peers /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+  bridge5:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge5
+    labels:
+      node.name: "bridge5"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+      - CELESTIA_BOOTSTRAPPER=false
+    volumes:
+      - ./consensus/bridge5:/home/celestia
+      - ./configs/bridge5-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+    ports:
+      - "16762:26658"
+      - "1225:2121"
+      - "16562:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --p2p.bootnodes /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --rda-bootstrap-peers /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+  bridge6:
+    image: rda-benchmark:v0.0.3
+    container_name: bridge6
+    labels:
+      node.name: "bridge6"
+    environment:
+      - P2P_NETWORK=private
+      - NODE_TYPE=bridge
+      - RDA_EXPECTED_NODES=4
+      - CELESTIA_BOOTSTRAPPER=false
+    volumes:
+      - ./consensus/bridge6:/home/celestia
+      - ./configs/bridge6-config.toml:/home/celestia/.celestia-bridge-private/config.toml
+    ports:
+      - "16763:26658"
+      - "1226:2121"
+      - "16563:26558"
+    command: >
+      celestia bridge start
+      --p2p.network private
+      --core.ip validator1
+      --rpc.addr 0.0.0.0
+      --rpc.port 26658
+      --metrics
+      --metrics.endpoint otel-collector:4318
+      --metrics.tls=false
+      --p2p.bootnodes /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --rda-bootstrap-peers /dns4/bridge/tcp/2121/p2p/12D3KooWMmdnCE3KAVJg1M88cjzXzVHNtExnCvd78QhonV1rXmLb 
+      --p2p.bootnodes /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --rda-bootstrap-peers /dns4/bridge2/tcp/2121/p2p/12D3KooWRj7ddrCK61TVsoKXRUwXPJDN2oBxJAHhrCSpaaVdXfBR 
+      --p2p.bootnodes /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --rda-bootstrap-peers /dns4/bridge3/tcp/2121/p2p/12D3KooWNqwK3qpr2Fft2n8bDkn9ez1ohU34G7j4UiSpVztYwsas
+      --das.mode rda
+      --das.rda-fallback-enabled=false
+    networks:
+      - rda-benchmark-network
+
+networks:
+  rda-benchmark-network:
+    external: true
+    name: rda-benchmark-network
