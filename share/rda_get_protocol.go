@@ -698,6 +698,19 @@ func (r *RDAGetProtocolRequester) isTargetColumnPeer(id peer.ID, targetCol uint3
 	return uint32(pos.Col) == targetCol
 }
 
+func (r *RDAGetProtocolRequester) isKnownWrongColumnPeer(id peer.ID, targetCol uint32) bool {
+	if r.gridManager == nil {
+		return false
+	}
+
+	pos, ok := r.gridManager.GetPeerPosition(id)
+	if !ok {
+		return false
+	}
+
+	return uint32(pos.Col) != targetCol
+}
+
 func excludePeer(peers []peer.ID, excluded peer.ID) []peer.ID {
 	if len(peers) == 0 {
 		return nil
@@ -785,22 +798,25 @@ func (r *RDAGetProtocolRequester) findFallbackPeers(row, col uint32, existing []
 	}
 	candidates = excludePeers(candidates, excluded)
 
-	// Prefer peers known to be in target column. This avoids noisy wrong-column
-	// probes (which always fail symbol->column mapping) when topology is stale.
+	// Prefer peers known to be in target column. Never probe peers known to be
+	// in the wrong column because they deterministically fail symbol->column mapping.
 	targetColumnCandidates := make([]peer.ID, 0, len(candidates))
-	unknownOrOther := make([]peer.ID, 0, len(candidates))
+	unknownColumnCandidates := make([]peer.ID, 0, len(candidates))
 	for _, p := range candidates {
 		if r.isTargetColumnPeer(p, col) {
 			targetColumnCandidates = append(targetColumnCandidates, p)
 			continue
 		}
-		unknownOrOther = append(unknownOrOther, p)
+		if r.isKnownWrongColumnPeer(p, col) {
+			continue
+		}
+		unknownColumnCandidates = append(unknownColumnCandidates, p)
 	}
 
 	if len(targetColumnCandidates) > 0 {
-		candidates = targetColumnCandidates
+		candidates = append(targetColumnCandidates, unknownColumnCandidates...)
 	} else {
-		candidates = unknownOrOther
+		candidates = unknownColumnCandidates
 	}
 
 	if r.host == nil {

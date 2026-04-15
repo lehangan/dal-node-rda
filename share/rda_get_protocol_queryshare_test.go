@@ -204,3 +204,20 @@ func TestShortPeerID_UsesPrefixAndSuffix(t *testing.T) {
 	require.Greater(t, len(full), 12)
 	require.Equal(t, full[:8]+".."+full[len(full)-4:], short)
 }
+
+func TestQueryShare_FallbackExcludesKnownWrongColumnPeers(t *testing.T) {
+	r := makeTestRequesterForQueryShare()
+
+	targetCol := int(Cell(10, uint32(r.gridManager.GetGridDimensions().Cols)))
+	wrongColPeerA := peer.ID("peer-wrong-col-a")
+	wrongColPeerB := peer.ID("peer-wrong-col-b")
+
+	r.gridManager.peerGrid[wrongColPeerA.String()] = GridPosition{Row: r.peerManager.myPosition.Row, Col: 0}
+	r.gridManager.peerGrid[wrongColPeerB.String()] = GridPosition{Row: r.peerManager.myPosition.Row, Col: 1}
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][wrongColPeerA] = peerInfo{id: wrongColPeerA, position: GridPosition{Row: r.peerManager.myPosition.Row, Col: 0}}
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][wrongColPeerB] = peerInfo{id: wrongColPeerB, position: GridPosition{Row: r.peerManager.myPosition.Row, Col: 1}}
+
+	got := r.findFallbackPeers(uint32(r.peerManager.myPosition.Row), uint32(targetCol), nil)
+	require.NotContains(t, got, wrongColPeerA)
+	require.NotContains(t, got, wrongColPeerB)
+}
