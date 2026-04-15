@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -407,14 +408,14 @@ func (p *RDAStoreProposer) DistributeBlock(
 
 		// ========== BƯỚC 2: TỚI PEERS TẠI (row, col) ==========
 		// Tìm danh sách peers ở vị trí intersection
-		intersectionPeers := p.findIntersectionPeers(int(row), int(col))
-		if len(intersectionPeers) == 0 {
-			storeLog.Warnf("PROPOSER - No peers at intersection (%d, %d)", row, col)
+		targetPeers := p.findStoreTargets(int(row), int(col))
+		if len(targetPeers) == 0 {
+			storeLog.Warnf("PROPOSER - No peers for target (%d, %d)", row, col)
 			failCount++
 			continue
 		}
 
-		storeLog.Debugf("PROPOSER - Found %d peers at (%d, %d)", len(intersectionPeers), row, col)
+		storeLog.Debugf("PROPOSER - Found %d peers for (%d, %d)", len(targetPeers), row, col)
 
 		// ========== BƯỚC 3: ĐÓNG GÓI & GỬI ==========
 		msg := &StoreMessage{
@@ -433,7 +434,7 @@ func (p *RDAStoreProposer) DistributeBlock(
 		}
 
 		// Gửi qua STORE protocol
-		for _, targetPeer := range intersectionPeers {
+		for _, targetPeer := range targetPeers {
 			if err := p.sendStoreMessage(ctx, targetPeer, msg); err != nil {
 				storeLog.Warnf("PROPOSER - Failed to send to %s: %v", targetPeer.String()[:16], err)
 				failCount++
@@ -455,6 +456,69 @@ func (p *RDAStoreProposer) DistributeBlock(
 		len(shares), successCount, failCount, latency)
 
 	return nil
+}
+
+func dedupeAndSortStorePeers(peers []peer.ID) []peer.ID {
+	if len(peers) == 0 {
+		return nil
+	}
+
+	seen := make(map[peer.ID]struct{}, len(peers))
+	out := make([]peer.ID, 0, len(peers))
+	for _, p := range peers {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].String() < out[j].String()
+	})
+
+	return out
+}
+
+func (p *RDAStoreProposer) filterStoreTargets(peers []peer.ID) []peer.ID {
+	if len(peers) == 0 {
+		return nil
+	}
+
+	selfID := p.host.ID()
+	filtered := make([]peer.ID, 0, len(peers))
+	for _, id := range dedupeAndSortStorePeers(peers) {
+		if id == selfID {
+			continue
+		}
+		if p.host.Network().Connectedness(id) == network.Connected {
+			filtered = append(filtered, id)
+		}
+	}
+
+	return filtered
+}
+
+func (p *RDAStoreProposer) findStoreTargets(row, col int) []peer.ID {
+	intersection := p.filterStoreTargets(p.findIntersectionPeers(row, col))
+	if len(intersection) > 0 {
+		return intersection
+	}
+
+	// If exact (row,col) is unavailable, still seed the STORE to any peer in target column.
+	columnCandidates := make([]peer.ID, 0)
+	if p.gridManager != nil {
+		columnCandidates = append(columnCandidates, p.gridManager.GetColPeers(col)...)
+	}
+	if p.peerManager != nil {
+		columnCandidates = append(columnCandidates, p.peerManager.GetColPeersFor(col)...)
+	}
+
+	fallback := p.filterStoreTargets(columnCandidates)
+	if len(fallback) > 0 {
+		storeLog.Warnf("PROPOSER - Intersection missing at (%d,%d), fallback to %d column peers", row, col, len(fallback))
+	}
+	return fallback
 }
 
 // findIntersectionPeers tìm peers ở vị trí (row, col)
