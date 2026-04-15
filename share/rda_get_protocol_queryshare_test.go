@@ -106,3 +106,75 @@ func TestQueryShare_DoesNotDialSelfWhenOnlyCandidate(t *testing.T) {
 	require.ErrorIs(t, err, ErrRDAPeerUnavailable)
 	require.Equal(t, 0, calls)
 }
+
+func TestQueryShare_FallbackWhenIntersectionEmpty(t *testing.T) {
+	r := makeTestRequesterForQueryShare()
+
+	targetCol := int(Cell(10, uint32(r.gridManager.GetGridDimensions().Cols)))
+	delete(r.peerManager.colPeers, targetCol)
+	r.gridManager.peerGrid = map[string]GridPosition{
+		r.selfPeerID.String(): {Row: r.peerManager.myPosition.Row, Col: r.peerManager.myPosition.Col},
+	}
+
+	fallbackPeer := peer.ID("peer-fallback")
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][fallbackPeer] = peerInfo{id: fallbackPeer, position: r.peerManager.myPosition}
+
+	calls := 0
+	r.sendGetRequestFn = func(context.Context, peer.ID, string, uint32) (*RDASymbol, error) {
+		calls++
+		return &RDASymbol{
+			Handle:     "handle-12345678",
+			ShareIndex: 10,
+			Row:        1,
+			Col:        uint32(targetCol),
+			ShareData:  []byte("payload"),
+			NMTProof: NMTProofData{
+				RootHash: []byte("root"),
+			},
+		}, nil
+	}
+
+	symbol, err := r.QueryShare(context.Background(), "handle-12345678", 10)
+	require.NoError(t, err)
+	require.NotNil(t, symbol)
+	require.Equal(t, 1, calls)
+}
+
+func TestQueryShare_ExpandPeersOnSymbolNotFound(t *testing.T) {
+	r := makeTestRequesterForQueryShare()
+
+	peerA := peer.ID("peer-a")
+	peerB := peer.ID("peer-b")
+	peerC := peer.ID("peer-c")
+
+	targetCol := int(Cell(10, uint32(r.gridManager.GetGridDimensions().Cols)))
+	r.gridManager.peerGrid = map[string]GridPosition{
+		r.selfPeerID.String(): {Row: r.peerManager.myPosition.Row, Col: r.peerManager.myPosition.Col},
+		peerA.String():        {Row: r.peerManager.myPosition.Row, Col: targetCol},
+		peerB.String():        {Row: r.peerManager.myPosition.Row, Col: targetCol},
+	}
+	r.peerManager.rowPeers[r.peerManager.myPosition.Row][peerC] = peerInfo{id: peerC, position: r.peerManager.myPosition}
+
+	calls := 0
+	r.sendGetRequestFn = func(context.Context, peer.ID, string, uint32) (*RDASymbol, error) {
+		calls++
+		if calls == 1 {
+			return nil, ErrRDASymbolNotFound
+		}
+		return &RDASymbol{
+			Handle:     "handle-12345678",
+			ShareIndex: 10,
+			Row:        1,
+			Col:        uint32(targetCol),
+			ShareData:  []byte("payload"),
+			NMTProof: NMTProofData{
+				RootHash: []byte("root"),
+			},
+		}, nil
+	}
+
+	symbol, err := r.QueryShare(context.Background(), "handle-12345678", 10)
+	require.NoError(t, err)
+	require.NotNil(t, symbol)
+	require.GreaterOrEqual(t, calls, 2)
+}

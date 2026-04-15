@@ -428,14 +428,18 @@ func (r *RDAGetProtocolRequester) QueryShare(
 	getLog.Infof("RDA|GET|QUERY_START handle=%s index=%d targetCol=%d myRow=%d",
 		shortHandle(handle), shareIndex, targetCol, myRow)
 
-	// Step 2: Find peers at (myRow, targetCol) intersection
-	intersectionPeers := r.findIntersectionPeers(myRow, targetCol)
-	if len(intersectionPeers) == 0 {
-		getLog.Warnf("RDA|GET|NO_PEERS row=%d col=%d", myRow, targetCol)
-		return nil, fmt.Errorf("%w: no peers available at grid intersection", ErrRDAPeerUnavailable)
+	// Step 2: Find peers at (myRow, targetCol) intersection.
+	queryPeers := r.findIntersectionPeers(myRow, targetCol)
+	if len(queryPeers) == 0 {
+		queryPeers = r.findFallbackPeers(myRow, targetCol, nil)
+		if len(queryPeers) == 0 {
+			getLog.Warnf("RDA|GET|NO_PEERS row=%d col=%d", myRow, targetCol)
+			return nil, fmt.Errorf("%w: no peers available at grid intersection", ErrRDAPeerUnavailable)
+		}
+		getLog.Warnf("RDA|GET|NO_INTERSECTION_FALLBACK row=%d col=%d fallback=%d", myRow, targetCol, len(queryPeers))
 	}
 
-	getLog.Debugf("RDA|GET|PEERS_FOUND count=%d row=%d col=%d", len(intersectionPeers), myRow, targetCol)
+	getLog.Debugf("RDA|GET|PEERS_FOUND count=%d row=%d col=%d", len(queryPeers), myRow, targetCol)
 
 	// Step 3: Try to query peers with retries
 	sendFn := r.sendGetRequestFn
@@ -444,8 +448,9 @@ func (r *RDAGetProtocolRequester) QueryShare(
 	}
 
 	var lastErr error
+	expandedOnNotFound := false
 	for attempt := 0; attempt < r.retryAttempts; attempt++ {
-		for _, targetPeer := range intersectionPeers {
+		for _, targetPeer := range queryPeers {
 			symbol, err := sendFn(ctx, targetPeer, handle, shareIndex)
 			if err == nil {
 				r.successfulGets++
@@ -454,6 +459,15 @@ func (r *RDAGetProtocolRequester) QueryShare(
 				return symbol, nil
 			}
 			lastErr = err
+			if !expandedOnNotFound && errors.Is(err, ErrRDASymbolNotFound) {
+				extraPeers := r.findFallbackPeers(myRow, targetCol, queryPeers)
+				if len(extraPeers) > 0 {
+					queryPeers = append(queryPeers, extraPeers...)
+					expandedOnNotFound = true
+					getLog.Warnf("RDA|GET|EXPAND_ON_NOT_FOUND row=%d col=%d added=%d total=%d",
+						myRow, targetCol, len(extraPeers), len(queryPeers))
+				}
+			}
 			getLog.Debugf("RDA|GET|RETRY peer=%s handle=%s index=%d attempt=%d error=%v", shortPeerID(targetPeer), shortHandle(handle), shareIndex, attempt+1, err)
 		}
 
@@ -468,7 +482,7 @@ func (r *RDAGetProtocolRequester) QueryShare(
 
 	r.failedRetries++
 	getLog.Warnf("RDA|GET|FAILED_ALL handle=%s index=%d row=%d col=%d retries=%d peers=%d last_error=%v",
-		shortHandle(handle), shareIndex, myRow, targetCol, r.retryAttempts, len(intersectionPeers), lastErr)
+		shortHandle(handle), shareIndex, myRow, targetCol, r.retryAttempts, len(queryPeers), lastErr)
 	if lastErr != nil {
 		return nil, lastErr
 	}
@@ -652,6 +666,25 @@ func dedupeAndSortPeers(peers []peer.ID) []peer.ID {
 	return out
 }
 
+func excludePeers(peers []peer.ID, excluded map[peer.ID]struct{}) []peer.ID {
+	if len(peers) == 0 {
+		return nil
+	}
+	if len(excluded) == 0 {
+		return peers
+	}
+
+	filtered := make([]peer.ID, 0, len(peers))
+	for _, p := range peers {
+		if _, ok := excluded[p]; ok {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+
+	return filtered
+}
+
 func excludePeer(peers []peer.ID, excluded peer.ID) []peer.ID {
 	if len(peers) == 0 {
 		return nil
@@ -708,6 +741,52 @@ func (r *RDAGetProtocolRequester) findIntersectionPeers(row, col uint32) []peer.
 
 	// Keep deterministic ordering even if currently disconnected.
 	return candidates
+}
+
+func (r *RDAGetProtocolRequester) findFallbackPeers(row, col uint32, existing []peer.ID) []peer.ID {
+	peerSet := make([]peer.ID, 0)
+	peerSet = append(peerSet, r.gridManager.GetColPeers(int(col))...)
+	peerSet = append(peerSet, r.gridManager.GetRowPeers(int(row))...)
+
+	if r.peerManager != nil {
+		peerSet = append(peerSet, r.peerManager.GetColPeersFor(int(col))...)
+		peerSet = append(peerSet, r.peerManager.GetRowPeersFor(int(row))...)
+		peerSet = append(peerSet, r.peerManager.GetSubnetPeers()...)
+	}
+
+	if r.host != nil {
+		peerSet = append(peerSet, r.host.Network().Peers()...)
+	}
+
+	candidates := dedupeAndSortPeers(peerSet)
+
+	selfID := r.selfPeerID
+	if selfID == "" && r.host != nil {
+		selfID = r.host.ID()
+	}
+	candidates = excludePeer(candidates, selfID)
+
+	excluded := make(map[peer.ID]struct{}, len(existing))
+	for _, p := range existing {
+		excluded[p] = struct{}{}
+	}
+	candidates = excludePeers(candidates, excluded)
+
+	if r.host == nil {
+		return candidates
+	}
+
+	connected := make([]peer.ID, 0, len(candidates))
+	disconnected := make([]peer.ID, 0, len(candidates))
+	for _, p := range candidates {
+		if r.host.Network().Connectedness(p) == network.Connected {
+			connected = append(connected, p)
+			continue
+		}
+		disconnected = append(disconnected, p)
+	}
+
+	return append(connected, disconnected...)
 }
 
 // GetStats trả về statistics
